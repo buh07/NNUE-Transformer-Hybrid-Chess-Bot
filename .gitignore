@@ -1,6 +1,10 @@
 # Python virtual environment
 chess_env/
 
+# Cloned repositories
+chess-transformers/
+Stockfish/
+
 # Python cache files
 __pycache__/
 *.py[cod]
