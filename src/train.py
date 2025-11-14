@@ -75,7 +75,10 @@ class HybridTrainer:
         # Loss functions
         self.policy_criterion = nn.CrossEntropyLoss()
         self.value_criterion = nn.MSELoss()
+        # Use standard BCE loss (selector outputs probabilities via Sigmoid)
         self.selector_criterion = nn.BCELoss()
+        # Store pos_weight for manual weighting in compute_losses
+        self.selector_pos_weight = config.SELECTOR_POS_WEIGHT
         
         # Training history
         self.history = {
@@ -161,7 +164,23 @@ class HybridTrainer:
                 selector_labels = improvement.float().unsqueeze(1)
             
             selector_preds = self.selector(selection_features)
-            selector_loss = self.selector_criterion(selector_preds, selector_labels)
+            
+            # Apply weighted BCE loss to handle class imbalance
+            # Weight positive class (transformer helps) more heavily
+            weights = torch.where(selector_labels == 1.0, 
+                                self.selector_pos_weight, 
+                                1.0)
+            selector_loss_unweighted = nn.functional.binary_cross_entropy(
+                selector_preds, selector_labels, reduction='none'
+            )
+            
+            # Apply focal loss component to focus on hard examples
+            # focal_weight = (1 - |pred - label|)^gamma emphasizes mistakes
+            focal_gamma = 2.0
+            pt = torch.where(selector_labels == 1.0, selector_preds, 1 - selector_preds)
+            focal_weight = (1 - pt) ** focal_gamma
+            
+            selector_loss = (selector_loss_unweighted * weights * focal_weight).mean()
             
             # Calculate accuracy
             with torch.no_grad():
