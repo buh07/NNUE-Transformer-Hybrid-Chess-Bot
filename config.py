@@ -31,7 +31,12 @@ GRADIENT_CLIP_NORM = 1.0
 # Dataset
 MAX_TRAIN_POSITIONS = 80000
 MAX_VAL_POSITIONS = 20000
-PGN_FILES = []  # Will be populated with actual PGN file paths
+PGN_FILES = [
+    'data/lichess_elite_2024-10.pgn',
+    'data/lichess_elite_2024-09.pgn',
+    'data/lichess_elite_2024-08.pgn',
+    'data/lichess_elite_2024-07.pgn',
+]  # Lichess Elite games: 2500+ vs 2300+ players
 
 # Training Schedule
 PHASE1_EPOCHS = 25  # Projection layer only
