@@ -477,10 +477,9 @@ def main():
     print("\nPreparing data...")
     
     # Check if PGN files exist
-    train_pgn_files = config.PGN_FILES if config.PGN_FILES else []
-    val_pgn_files = []  # Add validation PGN files if available
+    all_pgn_files = config.PGN_FILES if config.PGN_FILES else []
     
-    if not train_pgn_files:
+    if not all_pgn_files:
         print("Warning: No PGN files found. Using dummy dataset for testing.")
         print("For real training, add PGN files to config.PGN_FILES")
         
@@ -504,9 +503,11 @@ def main():
             collate_fn=collate_fn
         )
     else:
+        # Use all PGN files for training, dataset will split internally
+        # We load from all files and then split train/val in dataset
         train_loader, val_loader = create_dataloaders(
-            train_pgn_files,
-            val_pgn_files,
+            all_pgn_files,
+            all_pgn_files,  # Use same files, dataset splits by position count
             batch_size=config.BATCH_SIZE
         )
     

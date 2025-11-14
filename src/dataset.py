@@ -164,7 +164,7 @@ def create_dataloaders(train_pgn_files: List[str], val_pgn_files: List[str],
     
     Args:
         train_pgn_files: List of training PGN files
-        val_pgn_files: List of validation PGN files
+        val_pgn_files: List of validation PGN files (can be same as train)
         batch_size: Batch size (default from config)
         num_workers: Number of worker processes for data loading
     
@@ -174,9 +174,16 @@ def create_dataloaders(train_pgn_files: List[str], val_pgn_files: List[str],
     if batch_size is None:
         batch_size = config.BATCH_SIZE
     
-    # Create datasets
-    train_dataset = ChessDataset(train_pgn_files, max_positions=config.MAX_TRAIN_POSITIONS)
-    val_dataset = ChessDataset(val_pgn_files, max_positions=config.MAX_VAL_POSITIONS)
+    # Create combined dataset first
+    total_positions = config.MAX_TRAIN_POSITIONS + config.MAX_VAL_POSITIONS
+    full_dataset = ChessDataset(train_pgn_files, max_positions=total_positions)
+    
+    # Split into train/val
+    train_size = min(config.MAX_TRAIN_POSITIONS, len(full_dataset))
+    val_size = min(config.MAX_VAL_POSITIONS, len(full_dataset) - train_size)
+    
+    train_dataset = torch.utils.data.Subset(full_dataset, range(train_size))
+    val_dataset = torch.utils.data.Subset(full_dataset, range(train_size, train_size + val_size))
     
     # Create dataloaders
     train_loader = DataLoader(
