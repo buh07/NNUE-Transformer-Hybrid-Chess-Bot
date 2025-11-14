@@ -31,7 +31,7 @@ def analyze_selector(checkpoint_path='checkpoints/production_model.pt'):
     selector = create_selector().to(device)
     
     # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     projection.load_state_dict(checkpoint['projection_state_dict'])
     selector.load_state_dict(checkpoint['selector_state_dict'])
     projection.eval()

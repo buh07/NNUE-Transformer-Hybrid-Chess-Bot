@@ -221,10 +221,68 @@ def extract_selection_features(board: chess.Board, depth_remaining: int) -> torc
     # Feature 15: Halfmove clock (draw proximity)
     features.append(board.halfmove_clock / 50.0)
     
-    # Feature 16-20: Piece mobility (simplified)
+    # Feature 16: Forcing move ratio (tactical indicator)
+    # High ratio = tactical, low ratio = strategic
+    forcing_moves = sum(1 for m in legal_moves if 
+                       board.is_capture(m) or 
+                       board.gives_check(m) or
+                       (m.promotion is not None))
+    forcing_ratio = forcing_moves / max(len(legal_moves), 1)
+    features.append(forcing_ratio)
+    
+    # Feature 17: Pawn chain length (closed structure indicator)
+    # Count pawns that have supporting pawns behind them
+    pawn_chains = 0
+    for color in [chess.WHITE, chess.BLACK]:
+        pawns = board.pieces(chess.PAWN, color)
+        for sq in pawns:
+            rank, file = divmod(sq, 8)
+            # Check for supporting pawns on adjacent files
+            if color == chess.WHITE and rank > 0:
+                support_sqs = [sq - 9, sq - 7] if file > 0 and file < 7 else []
+                if file == 0: support_sqs = [sq - 7]
+                if file == 7: support_sqs = [sq - 9]
+            elif color == chess.BLACK and rank < 7:
+                support_sqs = [sq + 7, sq + 9] if file > 0 and file < 7 else []
+                if file == 0: support_sqs = [sq + 9]
+                if file == 7: support_sqs = [sq + 7]
+            else:
+                support_sqs = []
+            
+            for support in support_sqs:
+                if 0 <= support < 64 and support in pawns:
+                    pawn_chains += 1
+                    break
+    features.append(pawn_chains / 16.0)  # Normalize (max ~16 pawns)
+    
+    # Feature 18: Piece coordination (strategic indicator)
+    # Simple measure: pieces defending each other
+    piece_defense = 0
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece and piece.piece_type != chess.KING:
+            defenders = board.attackers(piece.color, square)
+            if len(defenders) > 0:
+                piece_defense += 1
+    features.append(piece_defense / 16.0)  # Normalize
+    
+    # Feature 19: Material imbalance (tactical indicator)
+    # Large imbalances need precise tactical evaluation
+    piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, 
+                   chess.ROOK: 5, chess.QUEEN: 9}
+    white_material = sum(piece_values.get(piece.piece_type, 0) 
+                        for piece in board.piece_map().values() 
+                        if piece.color == chess.WHITE and piece.piece_type != chess.KING)
+    black_material = sum(piece_values.get(piece.piece_type, 0)
+                        for piece in board.piece_map().values()
+                        if piece.color == chess.BLACK and piece.piece_type != chess.KING)
+    material_imbalance = abs(white_material - black_material) / 39.0  # Max ~39 points
+    features.append(material_imbalance)
+    
+    # Feature 20: Mobility ratio (open vs closed)
+    # Higher mobility = more open position (tactical)
     mobility = len(legal_moves)
     features.append(mobility / 50.0)
-    features.extend([0.0] * 4)  # Padding to 20 features
     
     return torch.tensor(features, dtype=torch.float32)
 

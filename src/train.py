@@ -157,12 +157,22 @@ class HybridTrainer:
         selector_accuracy = 0.0
         
         if phase == 'joint':
-            # Label: 1 if transformer improves, 0 otherwise
+            # NEW STRATEGY: Label positions as STRATEGIC (use transformer)
+            # Transformer excels at: endgames, closed positions, positional play
+            # NNUE excels at: tactical positions, forcing sequences, open positions
             with torch.no_grad():
-                nnue_error = torch.abs(nnue_values - target_values_scaled)
-                transformer_error = torch.abs(transformer_values - target_values_scaled)
-                improvement = transformer_error < nnue_error
-                selector_labels = improvement.float().unsqueeze(1)
+                # Extract strategic indicators from selection_features
+                # Feature indices from extract_selection_features():
+                # 0: legal_moves ratio, 1: captures ratio, 4: endgame flag, 7: check flag
+                
+                endgame = selection_features[:, 4] > 0.5          # Few pieces (6-12)
+                few_captures = selection_features[:, 1] < 0.2     # Low tactical complexity
+                not_in_check = selection_features[:, 7] < 0.5     # No forcing sequences
+                closed_position = selection_features[:, 0] < 0.4  # Few legal moves (blocked)
+                
+                # Strategic positions: (endgame OR closed) AND low tactics
+                is_strategic = ((endgame | closed_position) & few_captures & not_in_check)
+                selector_labels = is_strategic.float().unsqueeze(1)
             
             selector_preds = self.selector(selection_features)
             
@@ -595,7 +605,9 @@ def main():
         train_loader, val_loader = create_dataloaders(
             all_pgn_files,
             all_pgn_files,  # Use same files, dataset splits by position count
-            batch_size=config.BATCH_SIZE
+            batch_size=config.BATCH_SIZE,
+            use_stockfish_targets=config.USE_STOCKFISH_TARGETS,
+            stockfish_depth=config.STOCKFISH_TARGET_DEPTH
         )
     
     print(f"Training batches: {len(train_loader)}")

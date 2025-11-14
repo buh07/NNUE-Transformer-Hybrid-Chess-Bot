@@ -35,7 +35,7 @@ def load_model(checkpoint_path: str, device: str = 'cuda') -> HybridEvaluator:
     evaluator = HybridEvaluator(device=device)
     
     # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     evaluator.projection.load_state_dict(checkpoint['projection_state_dict'])
     evaluator.selector.load_state_dict(checkpoint['selector_state_dict'])
     

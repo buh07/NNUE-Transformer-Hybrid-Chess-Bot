@@ -64,7 +64,13 @@ Thumbs.db
 *.pth
 *.ckpt
 *.h5
-models/
 checkpoints/
 data/
+
+# Logs directory (organized location for all logs)
 logs/
+*.log
+
+# Tests output (can be regenerated)
+tests/__pycache__/
+tests/*.pyc

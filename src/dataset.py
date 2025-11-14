@@ -24,14 +24,20 @@ class ChessDataset(Dataset):
     Dataset of chess positions with labels for training
     """
     
-    def __init__(self, pgn_files: List[str], max_positions: int = 100000):
+    def __init__(self, pgn_files: List[str], max_positions: int = 100000, 
+                 use_stockfish_targets: bool = False, stockfish_depth: int = 10):
         """
         Args:
             pgn_files: List of PGN files with high-quality games
             max_positions: Maximum positions to extract
+            use_stockfish_targets: If True, use Stockfish evaluations as target values
+            stockfish_depth: Depth for Stockfish evaluation (default 10)
         """
         self.positions = []
         self.max_positions = max_positions
+        self.use_stockfish_targets = use_stockfish_targets
+        self.stockfish_depth = stockfish_depth
+        self.stockfish_evaluator = None
         
         if pgn_files:
             self.load_games(pgn_files, max_positions)
@@ -70,13 +76,18 @@ class ChessDataset(Dataset):
                         fen = board.fen()
                         result = game.headers.get('Result', '*')
                         
-                        # Convert result to value
-                        if result == '1-0':
-                            value = 1.0 if board.turn == chess.WHITE else -1.0
-                        elif result == '0-1':
-                            value = -1.0 if board.turn == chess.WHITE else 1.0
+                        # Store position info (will compute value on-the-fly if using Stockfish)
+                        if not self.use_stockfish_targets:
+                            # Convert game result to value
+                            if result == '1-0':
+                                value = 1.0 if board.turn == chess.WHITE else -1.0
+                            elif result == '0-1':
+                                value = -1.0 if board.turn == chess.WHITE else 1.0
+                            else:
+                                value = 0.0
                         else:
-                            value = 0.0
+                            # Will compute with Stockfish during __getitem__
+                            value = None
                         
                         self.positions.append({
                             'fen': fen,
@@ -122,13 +133,28 @@ class ChessDataset(Dataset):
         target_move = chess.Move.from_uci(data['move'])
         target_index = move_to_index(target_move)
         
+        # Get target value
+        if self.use_stockfish_targets:
+            # Lazy initialization of Stockfish evaluator
+            if self.stockfish_evaluator is None:
+                from utils.stockfish_eval import StockfishEvaluator
+                self.stockfish_evaluator = StockfishEvaluator(depth=self.stockfish_depth)
+            target_value = self.stockfish_evaluator.evaluate_position(board)
+        else:
+            target_value = data['value']
+        
         return {
             'board': board,
             'selection_features': selection_features,
             'legal_mask': legal_mask,
             'target_move_index': target_index,
-            'target_value': data['value']
+            'target_value': target_value
         }
+    
+    def __del__(self):
+        """Cleanup Stockfish evaluator if it exists"""
+        if self.stockfish_evaluator is not None:
+            self.stockfish_evaluator.close()
 
 
 def collate_fn(batch: List[Dict]) -> Dict:
@@ -158,7 +184,8 @@ def collate_fn(batch: List[Dict]) -> Dict:
 
 
 def create_dataloaders(train_pgn_files: List[str], val_pgn_files: List[str],
-                      batch_size: int = None, num_workers: int = 0) -> tuple:
+                      batch_size: int = None, num_workers: int = 0,
+                      use_stockfish_targets: bool = False, stockfish_depth: int = 10) -> tuple:
     """
     Create training and validation dataloaders
     
@@ -167,6 +194,8 @@ def create_dataloaders(train_pgn_files: List[str], val_pgn_files: List[str],
         val_pgn_files: List of validation PGN files (can be same as train)
         batch_size: Batch size (default from config)
         num_workers: Number of worker processes for data loading
+        use_stockfish_targets: If True, use Stockfish evaluations as target values
+        stockfish_depth: Depth for Stockfish evaluation
     
     Returns:
         train_loader, val_loader: DataLoader objects
@@ -176,7 +205,9 @@ def create_dataloaders(train_pgn_files: List[str], val_pgn_files: List[str],
     
     # Create combined dataset first
     total_positions = config.MAX_TRAIN_POSITIONS + config.MAX_VAL_POSITIONS
-    full_dataset = ChessDataset(train_pgn_files, max_positions=total_positions)
+    full_dataset = ChessDataset(train_pgn_files, max_positions=total_positions,
+                                use_stockfish_targets=use_stockfish_targets,
+                                stockfish_depth=stockfish_depth)
     
     # Split into train/val
     train_size = min(config.MAX_TRAIN_POSITIONS, len(full_dataset))

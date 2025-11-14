@@ -27,11 +27,15 @@ A state-of-the-art hybrid chess engine combining NNUE (Efficiently Updatable Neu
 ```
 NNUE-Transformer-Hybrid-Chess-Bot/
 ├── config.py                    # Hyperparameters and paths
-├── src/
+├── requirements.txt             # Python dependencies
+├── README.md                    # This file
+├── QUICKSTART.md               # Quick start guide
+│
+├── src/                        # Source code
 │   ├── models/
 │   │   ├── nnue_evaluator.py    # Stockfish NNUE wrapper
 │   │   ├── transformer_model.py # Transformer wrapper
-│   │   ├── projection_layer.py  # Trainable bridge (525K params)
+│   │   ├── projection_layer.py  # V1 Simple bridge (525K params)
 │   │   ├── selector.py          # Adaptive selector (3.5K params)
 │   │   └── hybrid_evaluator.py  # Combined system
 │   ├── utils/
@@ -40,16 +44,22 @@ NNUE-Transformer-Hybrid-Chess-Bot/
 │   ├── train.py                 # Two-phase training pipeline
 │   ├── search.py                # Alpha-beta search engine
 │   └── play.py                  # Game playing interface
-├── data/
-│   ├── lichess_elite_2024-*.pgn # Training data (1M+ games)
-│   └── README.md                # Data documentation
-├── checkpoints/                 # Model checkpoints
-├── Stockfish/                   # Stockfish NNUE repository
-├── chess-transformers/          # Transformer repository
-└── tests/
-    ├── test_implementation.py   # Component tests
-    ├── test_training.py         # Training pipeline tests
-    └── test_search.py           # Search engine tests
+│
+├── tests/                      # Test suite (all test_*.py files)
+│   ├── README.md               # Test documentation
+│   ├── test_projection_architectures.py
+│   ├── test_blending_weights.py
+│   └── ...                     # Other test files
+│
+├── logs/                       # Training and test logs (*.log files)
+│
+├── data/                       # Training data
+│   ├── lichess_elite_2024-*.pgn
+│   └── README.md
+│
+├── checkpoints/                # Model checkpoints
+├── Stockfish/                  # Stockfish NNUE repository
+└── chess-transformers/         # Transformer repository
 ```
 
 ## 🚀 Quick Start

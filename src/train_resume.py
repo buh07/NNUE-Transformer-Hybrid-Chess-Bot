@@ -26,7 +26,7 @@ import json
 def load_checkpoint(trainer, checkpoint_path):
     """Load checkpoint and restore training state"""
     print(f"Loading checkpoint from {checkpoint_path}...")
-    checkpoint = torch.load(checkpoint_path, map_location=trainer.device)
+    checkpoint = torch.load(checkpoint_path, map_location=trainer.device, weights_only=False)
     
     trainer.projection.load_state_dict(checkpoint['projection_state_dict'])
     trainer.selector.load_state_dict(checkpoint['selector_state_dict'])

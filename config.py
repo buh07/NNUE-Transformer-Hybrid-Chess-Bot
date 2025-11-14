@@ -12,6 +12,7 @@ STOCKFISH_DIR = os.path.join(PROJECT_ROOT, 'Stockfish')
 CHESS_TRANSFORMERS_DIR = os.path.join(PROJECT_ROOT, 'chess-transformers')
 
 # Model Paths  
+STOCKFISH_BINARY_PATH = os.path.join(STOCKFISH_DIR, 'src', 'stockfish')  # Compiled Stockfish binary
 STOCKFISH_NNUE_PATH = os.path.join(STOCKFISH_DIR, 'src', 'nn-49c1193b131c.nnue')  # Latest big network (best)
 TRANSFORMER_WEIGHTS_PATH = os.path.join(CHESS_TRANSFORMERS_DIR, 'checkpoints', 'CT-EFT-85', 'CT-EFT-85.pt')  # CT-EFT-85 (~19M params, best available)
 # Note: CT-EFT-85 downloaded from chess-transformers official checkpoint
@@ -39,14 +40,18 @@ LR_SCHEDULER_FACTOR = 0.5  # Multiply LR by this factor when reducing
 LR_SCHEDULER_MIN_LR = 1e-6  # Minimum learning rate
 
 # Dataset
-MAX_TRAIN_POSITIONS = 80000
-MAX_VAL_POSITIONS = 20000
+MAX_TRAIN_POSITIONS = 200000  # Increased from 80000 for better training
+MAX_VAL_POSITIONS = 50000     # Increased from 20000 for better validation
 PGN_FILES = [
     'data/lichess_elite_2024-10.pgn',
     'data/lichess_elite_2024-09.pgn',
     'data/lichess_elite_2024-08.pgn',
     'data/lichess_elite_2024-07.pgn',
 ]  # Lichess Elite games: 2500+ vs 2300+ players
+
+# Stockfish Target Values
+USE_STOCKFISH_TARGETS = True  # Use Stockfish evaluations instead of game results
+STOCKFISH_TARGET_DEPTH = 10   # Depth for Stockfish evaluation of target values
 
 # Training Schedule
 PHASE1_EPOCHS = 25  # Projection layer only (back to original)
@@ -57,23 +62,28 @@ POLICY_LOSS_WEIGHT = 1.0
 VALUE_LOSS_WEIGHT = 1.0
 SELECTOR_LOSS_WEIGHT = 0.5
 
-# Selector Parameters
+# Selector Parameters - STRATEGIC ROUTING
+# Strategy: Use Transformer for strategic positions, NNUE for tactical positions
+# - Transformer: Endgames, closed positions, positional deadlocks, low tactics
+# - NNUE: Open positions, forcing sequences, material imbalances, tactical complexity
 SELECTOR_THRESHOLD = 0.5  # Threshold for using transformer
-SELECTOR_POS_WEIGHT = 1.2  # Weight for positive class (transformer helps) - reduced from 1.5
+SELECTOR_POS_WEIGHT = 1.2  # Weight for positive class (strategic positions)
 SELECTOR_HIDDEN_DIM_1 = 128  # Hidden layer 1 size
 SELECTOR_HIDDEN_DIM_2 = 64   # Hidden layer 2 size
-SELECTOR_DROPOUT = 0.2       # Dropout for regularization (increased from 0.15)
+SELECTOR_DROPOUT = 0.2       # Dropout for regularization
 
-# Projection Layer Parameters
+# Projection Layer Parameters - V1 Simple Architecture
+# Using 1024->512 simple projection (optimal per test results)
+# V1 achieves 2244.53 loss vs 2264.14 for V3 multi-layer, with 7x fewer params
 PROJECTION_DROPOUT = 0.1
 
 # Search Parameters
 MAX_SEARCH_DEPTH = 18
 DEFAULT_TIME_PER_MOVE = 5.0  # seconds
 
-# Value Blending
-NNUE_VALUE_WEIGHT = 0.3
-TRANSFORMER_VALUE_WEIGHT = 0.7
+# Value Blending (optimized via test_blending_weights.py - pure NNUE best)
+NNUE_VALUE_WEIGHT = 1.0
+TRANSFORMER_VALUE_WEIGHT = 0.0
 
 # Inference
 TEMPERATURE = 1.0  # Temperature for softmax during move selection
