@@ -1,0 +1,9 @@
+{
+  "total_epochs": 200,
+  "total_time_hours": 4.766400031248728,
+  "final_train_loss": 7310.0652799271165,
+  "final_val_loss": 9527.39612898042,
+  "final_selector_accuracy": 0.47186511075949367,
+  "best_train_loss": 7310.0652799271165,
+  "best_val_loss": 8247.778944570808
+}

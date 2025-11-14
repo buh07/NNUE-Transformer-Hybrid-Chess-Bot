@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import time
 from typing import Dict, Tuple
@@ -352,7 +353,19 @@ class HybridTrainer:
             lr=learning_rate
         )
         
+        # Learning rate scheduler
+        scheduler = ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=config.LR_SCHEDULER_FACTOR,
+            patience=config.LR_SCHEDULER_PATIENCE,
+            min_lr=config.LR_SCHEDULER_MIN_LR,
+            verbose=True
+        )
+        
+        # Early stopping
         best_val_loss = float('inf')
+        epochs_without_improvement = 0
         
         for epoch in range(1, num_epochs + 1):
             # Train
@@ -373,18 +386,33 @@ class HybridTrainer:
             print(f"  Train Loss: {train_metrics['loss']:.4f} | Val Loss: {val_metrics['loss']:.4f}")
             print(f"  Train Policy: {train_metrics['policy_loss']:.4f} | Val Policy: {val_metrics['policy_loss']:.4f}")
             print(f"  Train Value: {train_metrics['value_loss']:.4f} | Val Value: {val_metrics['value_loss']:.4f}")
+            print(f"  Current LR: {self.optimizer.param_groups[0]['lr']:.2e}")
             
-            # Save best model
-            if val_metrics['loss'] < best_val_loss:
+            # Update learning rate scheduler
+            scheduler.step(val_metrics['loss'])
+            
+            # Check for improvement
+            if val_metrics['loss'] < best_val_loss - config.EARLY_STOPPING_MIN_DELTA:
                 best_val_loss = val_metrics['loss']
+                epochs_without_improvement = 0
                 self.save_checkpoint('best_phase1.pt', epoch, phase=1)
                 print(f"  ✓ Saved best Phase 1 model (val_loss={best_val_loss:.4f})")
+            else:
+                epochs_without_improvement += 1
+                print(f"  No improvement for {epochs_without_improvement} epoch(s)")
+            
+            # Early stopping check
+            if epochs_without_improvement >= config.EARLY_STOPPING_PATIENCE:
+                print(f"\n⚠ Early stopping triggered after {epoch} epochs")
+                print(f"  Best val loss: {best_val_loss:.4f}")
+                break
             
             # Save periodic checkpoint
             if epoch % 5 == 0:
                 self.save_checkpoint(f'phase1_epoch{epoch}.pt', epoch, phase=1)
         
         print("\n✓ Phase 1 training complete!")
+        print(f"  Best validation loss: {best_val_loss:.4f}")
     
     def train_phase2(self, num_epochs: int = 25, learning_rate: float = None):
         """
@@ -406,12 +434,29 @@ class HybridTrainer:
             param.requires_grad = True
         
         # Optimizer for both projection and selector
+        selector_lr = learning_rate * config.SELECTOR_LR_MULTIPLIER
+        print(f"  Projection LR: {learning_rate:.2e}")
+        print(f"  Selector LR: {selector_lr:.2e} (multiplier: {config.SELECTOR_LR_MULTIPLIER})")
+        
         self.optimizer = torch.optim.Adam([
             {'params': self.projection.parameters(), 'lr': learning_rate},
-            {'params': self.selector.parameters(), 'lr': learning_rate * config.SELECTOR_LR_MULTIPLIER}
+            {'params': self.selector.parameters(), 'lr': selector_lr}
         ])
         
+        # Learning rate scheduler for both parameter groups
+        scheduler = ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=config.LR_SCHEDULER_FACTOR,
+            patience=config.LR_SCHEDULER_PATIENCE,
+            min_lr=config.LR_SCHEDULER_MIN_LR,
+            verbose=True
+        )
+        
+        # Early stopping
         best_val_loss = float('inf')
+        epochs_without_improvement = 0
+        best_selector_acc = 0.0
         
         for epoch in range(1, num_epochs + 1):
             # Train
@@ -437,17 +482,40 @@ class HybridTrainer:
             print(f"  Train Value: {train_metrics['value_loss']:.4f} | Val Value: {val_metrics['value_loss']:.4f}")
             print(f"  Train Selector: {train_metrics['selector_loss']:.4f} | Val Selector: {val_metrics['selector_loss']:.4f}")
             print(f"  Selector Accuracy: {val_metrics['selector_accuracy']:.2%}")
+            print(f"  Current Projection LR: {self.optimizer.param_groups[0]['lr']:.2e}")
+            print(f"  Current Selector LR: {self.optimizer.param_groups[1]['lr']:.2e}")
             
-            # Save best model
-            if val_metrics['loss'] < best_val_loss:
+            # Update learning rate scheduler
+            scheduler.step(val_metrics['loss'])
+            
+            # Track best selector accuracy
+            if val_metrics['selector_accuracy'] > best_selector_acc:
+                best_selector_acc = val_metrics['selector_accuracy']
+            
+            # Check for improvement
+            if val_metrics['loss'] < best_val_loss - config.EARLY_STOPPING_MIN_DELTA:
                 best_val_loss = val_metrics['loss']
+                epochs_without_improvement = 0
                 self.save_checkpoint('best_phase2.pt', epoch, phase=2)
                 print(f"  ✓ Saved best Phase 2 model (val_loss={best_val_loss:.4f})")
+            else:
+                epochs_without_improvement += 1
+                print(f"  No improvement for {epochs_without_improvement} epoch(s)")
+            
+            # Early stopping check
+            if epochs_without_improvement >= config.EARLY_STOPPING_PATIENCE:
+                print(f"\n⚠ Early stopping triggered after {epoch} epochs")
+                print(f"  Best val loss: {best_val_loss:.4f}")
+                print(f"  Best selector accuracy: {best_selector_acc:.2%}")
+                break
             
             # Save periodic checkpoint
             if epoch % 5 == 0:
                 self.save_checkpoint(f'phase2_epoch{epoch}.pt', epoch, phase=2)
         
+        print("\n✓ Phase 2 training complete!")
+        print(f"  Best validation loss: {best_val_loss:.4f}")
+        print(f"  Best selector accuracy: {best_selector_acc:.2%}")
         print("\n✓ Phase 2 training complete!")
     
     def save_checkpoint(self, filename: str, epoch: int, phase: int):
@@ -555,7 +623,8 @@ def main():
     trainer.train_phase2(num_epochs=config.PHASE2_EPOCHS)
     
     # Save final model
-    trainer.save_checkpoint('final_model.pt', config.PHASE1_EPOCHS + config.PHASE2_EPOCHS, phase=2)
+    total_epochs = len(trainer.history['train_loss'])
+    trainer.save_checkpoint('final_model.pt', total_epochs, phase=2)
     trainer.save_history()
     
     elapsed_time = time.time() - start_time
@@ -567,10 +636,31 @@ def main():
     
     # Print final metrics
     print("\nFinal Metrics:")
+    print(f"  Total epochs trained: {total_epochs}")
     print(f"  Final train loss: {trainer.history['train_loss'][-1]:.4f}")
     print(f"  Final val loss: {trainer.history['val_loss'][-1]:.4f}")
+    print(f"  Best val loss: {min(trainer.history['val_loss']):.4f}")
     if trainer.history['selector_accuracy']:
-        print(f"  Selector accuracy: {trainer.history['selector_accuracy'][-1]:.2%}")
+        print(f"  Final selector accuracy: {trainer.history['selector_accuracy'][-1]:.2%}")
+        print(f"  Best selector accuracy: {max(trainer.history['selector_accuracy']):.2%}")
+    
+    # Save training summary
+    summary_path = os.path.join(config.CHECKPOINT_DIR, 'training_summary.json')
+    summary = {
+        'total_epochs': total_epochs,
+        'total_time_hours': elapsed_time / 3600,
+        'final_train_loss': trainer.history['train_loss'][-1],
+        'final_val_loss': trainer.history['val_loss'][-1],
+        'best_train_loss': min(trainer.history['train_loss']),
+        'best_val_loss': min(trainer.history['val_loss']),
+    }
+    if trainer.history['selector_accuracy']:
+        summary['final_selector_accuracy'] = trainer.history['selector_accuracy'][-1]
+        summary['best_selector_accuracy'] = max(trainer.history['selector_accuracy'])
+    
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    print(f"\nTraining summary saved to {summary_path}")
 
 
 if __name__ == '__main__':
