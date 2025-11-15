@@ -34,18 +34,40 @@ def load_checkpoint(trainer, checkpoint_path):
     # Restore history if available
     if 'history' in checkpoint:
         trainer.history = checkpoint['history']
-        print(f"Restored training history with {len(trainer.history['train_loss'])} epochs")
+        total_history_entries = len(trainer.history['train_loss'])
+        
+        # Selector accuracy only exists for Phase 2 epochs
+        # Use this to determine how many Phase 1 vs Phase 2 epochs were completed
+        phase2_epochs_completed = len([x for x in trainer.history['selector_accuracy'] if x > 0])
+        phase1_epochs_completed = total_history_entries - phase2_epochs_completed
+        
+        print(f"Restored training history: {total_history_entries} total epochs")
+        print(f"  Phase 1 completed: {phase1_epochs_completed} epochs")
+        print(f"  Phase 2 completed: {phase2_epochs_completed} epochs")
+    else:
+        phase1_epochs_completed = 0
+        phase2_epochs_completed = 0
     
-    return checkpoint.get('epoch', 0), checkpoint.get('phase', 1)
+    # Phase tells us which training phase we're in (1 or 2)
+    phase = checkpoint.get('phase', 1)
+    epoch_in_phase = checkpoint.get('epoch', 0)
+    
+    print(f"Checkpoint saved at: Phase {phase}, Epoch {epoch_in_phase} (within phase)")
+    
+    return phase1_epochs_completed, phase2_epochs_completed, phase
 
 
 def main():
     parser = argparse.ArgumentParser(description='Resume training from checkpoint')
     parser.add_argument('--checkpoint', type=str, default='best_phase2.pt',
                       help='Checkpoint filename to resume from')
-    parser.add_argument('--phase1-epochs', type=int, default=100,
+    parser.add_argument('--start-phase', type=int, choices=[1, 2], default=None,
+                      help='Override: which phase to start from (1 or 2)')
+    parser.add_argument('--start-phase-epoch', type=int, default=None,
+                      help='Override: which epoch within the phase to start from')
+    parser.add_argument('--phase1-epochs', type=int, default=25,
                       help='Total epochs for phase 1 (projection only)')
-    parser.add_argument('--phase2-epochs', type=int, default=100,
+    parser.add_argument('--phase2-epochs', type=int, default=25,
                       help='Total epochs for phase 2 (joint training)')
     parser.add_argument('--gpu', type=int, default=None,
                       help='GPU device to use (default: CUDA_VISIBLE_DEVICES or 0)')
@@ -111,47 +133,73 @@ def main():
     )
     
     # Load checkpoint
-    checkpoint_path = os.path.join(config.CHECKPOINT_DIR, args.checkpoint)
+    checkpoint_path = args.checkpoint
+    # If it's not an absolute path and doesn't already start with a directory, add CHECKPOINT_DIR
+    if not os.path.isabs(checkpoint_path) and not os.path.dirname(checkpoint_path):
+        checkpoint_path = os.path.join(config.CHECKPOINT_DIR, checkpoint_path)
+    
     if os.path.exists(checkpoint_path):
-        last_epoch, last_phase = load_checkpoint(trainer, checkpoint_path)
-        print(f"Resuming from epoch {last_epoch}, phase {last_phase}")
+        completed_phase1, completed_phase2, last_phase = load_checkpoint(trainer, checkpoint_path)
+        print(f"Checkpoint was at: Phase {last_phase}")
     else:
         print(f"Checkpoint not found: {checkpoint_path}")
         print("Starting fresh training...")
-        last_epoch = 0
+        completed_phase1 = 0
+        completed_phase2 = 0
         last_phase = 0
+    
+    # Apply manual overrides if specified
+    if args.start_phase is not None:
+        print(f"\n⚠️  Manual override: Starting from Phase {args.start_phase}")
+        if args.start_phase == 1:
+            completed_phase1 = args.start_phase_epoch if args.start_phase_epoch else 0
+            completed_phase2 = 0
+        else:  # Phase 2
+            completed_phase1 = args.phase1_epochs  # Assume Phase 1 is complete
+            completed_phase2 = args.start_phase_epoch if args.start_phase_epoch else 0
     
     # Training schedule
     print("\nTraining Schedule:")
-    print(f"  Phase 1: {args.phase1_epochs} epochs (projection only)")
-    print(f"  Phase 2: {args.phase2_epochs} epochs (joint training)")
-    print(f"  Total: {args.phase1_epochs + args.phase2_epochs} epochs")
+    print(f"  Phase 1 target: {args.phase1_epochs} epochs (projection only)")
+    print(f"  Phase 2 target: {args.phase2_epochs} epochs (joint training)")
+    print(f"  Total target: {args.phase1_epochs + args.phase2_epochs} epochs")
     
-    if last_epoch > 0:
-        completed_phase1 = min(last_epoch, args.phase1_epochs)
-        completed_phase2 = max(0, last_epoch - args.phase1_epochs)
-        print(f"\nAlready completed:")
-        print(f"  Phase 1: {completed_phase1} epochs")
-        print(f"  Phase 2: {completed_phase2} epochs")
-        print(f"  Remaining: {args.phase1_epochs + args.phase2_epochs - last_epoch} epochs")
+    if completed_phase1 > 0 or completed_phase2 > 0:
+        print(f"\nStarting from:")
+        print(f"  Phase 1: {completed_phase1} epochs completed")
+        print(f"  Phase 2: {completed_phase2} epochs completed")
+        remaining_phase1 = max(0, args.phase1_epochs - completed_phase1)
+        remaining_phase2 = max(0, args.phase2_epochs - completed_phase2)
+        total_remaining = remaining_phase1 + remaining_phase2
+        print(f"  Remaining: {total_remaining} epochs ({remaining_phase1} Phase 1, {remaining_phase2} Phase 2)")
     
     start_time = time.time()
     
     # Phase 1: Projection layer only
-    if last_epoch < args.phase1_epochs:
-        remaining_phase1 = args.phase1_epochs - last_epoch
-        print(f"\nContinuing Phase 1 for {remaining_phase1} more epochs...")
+    if completed_phase1 < args.phase1_epochs:
+        remaining_phase1 = args.phase1_epochs - completed_phase1
+        print(f"\n{'='*70}")
+        print(f"CONTINUING PHASE 1 for {remaining_phase1} more epochs...")
+        print(f"{'='*70}")
         trainer.train_phase1(num_epochs=remaining_phase1)
     else:
-        print("\nPhase 1 already complete, skipping...")
+        print(f"\n{'='*70}")
+        print("PHASE 1 ALREADY COMPLETE - Skipping to Phase 2")
+        print(f"{'='*70}")
     
     # Phase 2: Joint training
-    if last_epoch < args.phase1_epochs + args.phase2_epochs:
-        remaining_phase2 = args.phase2_epochs - max(0, last_epoch - args.phase1_epochs)
-        print(f"\nContinuing Phase 2 for {remaining_phase2} more epochs...")
+    if completed_phase2 < args.phase2_epochs:
+        remaining_phase2 = args.phase2_epochs - completed_phase2
+        print(f"\n{'='*70}")
+        print(f"CONTINUING PHASE 2 for {remaining_phase2} more epochs...")
+        print(f"  Already completed: {completed_phase2} Phase 2 epochs")
+        print(f"  Starting from Phase 2 epoch {completed_phase2 + 1}")
+        print(f"{'='*70}")
         trainer.train_phase2(num_epochs=remaining_phase2)
     else:
-        print("\nPhase 2 already complete, skipping...")
+        print(f"\n{'='*70}")
+        print("PHASE 2 ALREADY COMPLETE")
+        print(f"{'='*70}")
     
     # Save final model
     final_epoch = args.phase1_epochs + args.phase2_epochs

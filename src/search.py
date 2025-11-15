@@ -186,7 +186,12 @@ class AlphaBetaSearch:
             policy_logits, value, use_transformer = self.evaluator.evaluate(board)
         
         # Value is from white's perspective, convert to current player's perspective
-        score = value.item()
+        # Handle both tensor and float values
+        if isinstance(value, torch.Tensor):
+            score = value.item()
+        else:
+            score = float(value)
+        
         if not board.turn:  # Black to move
             score = -score
         
@@ -367,4 +372,41 @@ class AlphaBetaSearch:
     
     def clear_tt(self):
         """Clear the transposition table."""
+        self.tt.clear()
+    
+    def iterative_deepening(self, board: chess.Board, max_depth: Optional[int] = None,
+                           time_limit: Optional[float] = None) -> Tuple[chess.Move, float]:
+        """
+        Alias for search_iterative_deepening that returns (move, score).
+        Compatible with HybridChessBot interface.
+        """
+        best_move, best_score, stats = self.search_iterative_deepening(board, max_depth, time_limit)
+        return best_move, best_score
+    
+    def get_statistics(self) -> Dict:
+        """
+        Get search statistics.
+        
+        Returns:
+            Dictionary with search statistics
+        """
+        tt_stats = self.tt.get_stats()
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        
+        return {
+            'nodes_searched': self.nodes_searched,
+            'quiescence_nodes': self.quiescence_nodes,
+            'time_elapsed': elapsed,
+            'nps': self.nodes_searched / elapsed if elapsed > 0 else 0,
+            'tt_size': tt_stats['size'],
+            'tt_hits': tt_stats['hits'],
+            'tt_misses': tt_stats['misses'],
+            'tt_hit_rate': tt_stats['hit_rate']
+        }
+    
+    def reset_statistics(self):
+        """Reset search statistics."""
+        self.nodes_searched = 0
+        self.quiescence_nodes = 0
+        self.start_time = 0
         self.tt.clear()
