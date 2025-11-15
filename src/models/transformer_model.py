@@ -70,8 +70,11 @@ class ChessTransformer(nn.Module):
         if weights_path and os.path.exists(weights_path):
             self.load_transformer_weights(weights_path)
         else:
-            print(f"Warning: Transformer weights not found at {weights_path}")
-            print("Using randomly initialized weights (placeholder)")
+            if weights_path:
+                print(f"⚠ Transformer weights not found at {weights_path}")
+            else:
+                print(f"⚠ No transformer weights path specified")
+            print("  Using randomly initialized weights (not recommended for production)")
         
         # Freeze parameters - no training for base transformer
         self.eval()
@@ -90,16 +93,20 @@ class ChessTransformer(nn.Module):
             
             # Handle different checkpoint formats
             if 'model_state_dict' in checkpoint:
-                self.load_state_dict(checkpoint['model_state_dict'], strict=False)
+                result = self.load_state_dict(checkpoint['model_state_dict'], strict=False)
             elif 'state_dict' in checkpoint:
-                self.load_state_dict(checkpoint['state_dict'], strict=False)
+                result = self.load_state_dict(checkpoint['state_dict'], strict=False)
             else:
-                self.load_state_dict(checkpoint, strict=False)
+                result = self.load_state_dict(checkpoint, strict=False)
             
-            print(f"Loaded transformer weights from {path}")
+            print(f"✓ Loaded ChessTransformer weights from {os.path.basename(path)}")
+            if result.missing_keys:
+                print(f"  Note: {len(result.missing_keys)} missing keys (normal for architecture mismatch)")
+            if result.unexpected_keys:
+                print(f"  Note: {len(result.unexpected_keys)} unexpected keys (will be ignored)")
         except Exception as e:
-            print(f"Error loading transformer weights: {e}")
-            print("Using randomly initialized weights")
+            print(f"⚠ Error loading transformer weights: {e}")
+            print("  Using randomly initialized weights")
     
     def forward(self, strategic_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -188,32 +195,31 @@ class ChessTransformer(nn.Module):
 
 def create_transformer_model(weights_path: str = None) -> ChessTransformer:
     """
-    Factory function to create transformer model
+    Factory function to create transformer model with pre-trained weights
     
     Args:
-        weights_path: Path to transformer checkpoint
+        weights_path: Path to transformer checkpoint (default: config.TRANSFORMER_WEIGHTS_PATH)
     
     Returns:
-        model: ChessTransformer instance
+        model: ChessTransformer instance with loaded weights
     """
     if weights_path is None:
-        # Use configured weights path
+        # Use configured weights path (CT-EFT-85.pt by default)
         weights_path = config.TRANSFORMER_WEIGHTS_PATH
-        if weights_path and os.path.exists(weights_path):
-            print(f"Using configured transformer weights: {weights_path}")
-        else:
-            # Fallback: Try to find weights in chess-transformers directory
-            transformer_dir = config.CHESS_TRANSFORMERS_DIR
-            if os.path.exists(transformer_dir):
-                checkpoints = os.path.join(transformer_dir, 'checkpoints')
-                if os.path.exists(checkpoints):
-                    # Look for .pt or .pth files
-                    import glob
-                    weight_files = glob.glob(os.path.join(checkpoints, '**/*.pt'), recursive=True)
-                    weight_files.extend(glob.glob(os.path.join(checkpoints, '**/*.pth'), recursive=True))
-                    if weight_files:
-                        weights_path = weight_files[0]
-                        print(f"Found transformer weights: {weights_path}")
+    
+    # Validate weights exist
+    if not weights_path or not os.path.exists(weights_path):
+        # Fallback: Try to find weights in chess-transformers directory
+        transformer_dir = config.CHESS_TRANSFORMERS_DIR
+        if os.path.exists(transformer_dir):
+            checkpoints = os.path.join(transformer_dir, 'checkpoints')
+            if os.path.exists(checkpoints):
+                # Look for .pt or .pth files
+                import glob
+                weight_files = glob.glob(os.path.join(checkpoints, '**/*.pt'), recursive=True)
+                weight_files.extend(glob.glob(os.path.join(checkpoints, '**/*.pth'), recursive=True))
+                if weight_files:
+                    weights_path = weight_files[0]
     
     model = ChessTransformer(weights_path)
     return model

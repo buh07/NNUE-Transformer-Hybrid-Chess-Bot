@@ -13,9 +13,13 @@ CHESS_TRANSFORMERS_DIR = os.path.join(PROJECT_ROOT, 'chess-transformers')
 
 # Model Paths  
 STOCKFISH_BINARY_PATH = os.path.join(STOCKFISH_DIR, 'src', 'stockfish')  # Compiled Stockfish binary
-STOCKFISH_NNUE_PATH = os.path.join(STOCKFISH_DIR, 'src', 'nn-49c1193b131c.nnue')  # Latest big network (best)
-TRANSFORMER_WEIGHTS_PATH = os.path.join(CHESS_TRANSFORMERS_DIR, 'checkpoints', 'CT-EFT-85', 'CT-EFT-85.pt')  # CT-EFT-85 (~19M params, best available)
-# Note: CT-EFT-85 downloaded from chess-transformers official checkpoint
+STOCKFISH_NNUE_PATH = os.path.join(STOCKFISH_DIR, 'src', 'nn-49c1193b131c.nnue')  # Latest big network (110MB, best)
+TRANSFORMER_WEIGHTS_PATH = os.path.join(CHESS_TRANSFORMERS_DIR, 'checkpoints', 'CT-EFT-85', 'CT-EFT-85.pt')  # CT-EFT-85 (~19M params, 73MB, best available)
+HYBRID_CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, 'best_phase2.pt')  # Trained projection + selector weights
+# Note: All model weights are downloaded and ready to use:
+#   - Stockfish NNUE: nn-49c1193b131c.nnue (110MB, via Stockfish engine)
+#   - ChessTransformer: CT-EFT-85.pt (73MB, pre-trained transformer)
+#   - Hybrid trained weights: best_phase2.pt (projection + selector from training)
 
 # Model Architecture
 NNUE_FEATURE_DIM = 1024  # NNUE accumulator output dimension

@@ -143,7 +143,9 @@ class NNUEEvaluator(nn.Module):
         # Get value from Stockfish engine if available, otherwise use network
         if self.use_stockfish_engine and self.engine is not None:
             try:
-                info = self.engine.analyse(board, chess.engine.Limit(depth=10))
+                # Use depth=1 for fast NNUE-only evaluation (no search)
+                # This gives us pure NNUE eval without spending time on search
+                info = self.engine.analyse(board, chess.engine.Limit(depth=1))
                 score = info["score"].relative
                 if score.is_mate():
                     # Convert mate scores to large centipawn values

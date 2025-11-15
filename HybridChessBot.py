@@ -37,16 +37,16 @@ class HybridChessBot:
         move = bot.choose_move(board)
     """
     
-    def __init__(self, checkpoint: str = 'checkpoints/best_phase2.pt', 
+    def __init__(self, checkpoint: str = None, 
                  depth: int = 5, time_limit: float = 5.0,
                  device: str = None, verbose: bool = False,
                  use_time_management: bool = False,
                  total_game_time: float = None):
         """
-        Initialize the hybrid chess bot.
+        Initialize the hybrid chess bot with ALL downloaded weights.
         
         Args:
-            checkpoint: Path to trained model checkpoint (relative to project root)
+            checkpoint: Path to trained model checkpoint (default: config.HYBRID_CHECKPOINT_PATH)
             depth: Maximum search depth (default: 5)
             time_limit: Time limit per move in seconds (default: 5.0)
             device: 'cuda' or 'cpu' (auto-detect if None)
@@ -76,11 +76,17 @@ class HybridChessBot:
         if self.verbose:
             print(f"[HybridChessBot] Initializing on device: {self.device}")
         
+        # Use default checkpoint if not specified
+        if checkpoint is None:
+            checkpoint = config.HYBRID_CHECKPOINT_PATH
+            if self.verbose:
+                print(f"[HybridChessBot] Using default checkpoint: {checkpoint}")
+        
         # Convert checkpoint path to absolute if relative
         if not os.path.isabs(checkpoint):
             checkpoint = os.path.join(os.path.dirname(__file__), checkpoint)
         
-        # Load models
+        # Load models (with ALL downloaded weights)
         self._load_models(checkpoint)
         
         # Initialize search engine
@@ -99,17 +105,29 @@ class HybridChessBot:
     def _load_models(self, checkpoint_path: str):
         """Load all model components and trained weights."""
         if self.verbose:
-            print(f"[HybridChessBot] Loading checkpoint: {checkpoint_path}")
+            print(f"\n[HybridChessBot] Loading ALL available weights:")
+            print(f"  1. Stockfish NNUE: {config.STOCKFISH_NNUE_PATH}")
+            print(f"  2. Stockfish Engine: {config.STOCKFISH_BINARY_PATH}")
+            print(f"  3. ChessTransformer: {config.TRANSFORMER_WEIGHTS_PATH}")
+            print(f"  4. Hybrid checkpoint: {checkpoint_path}")
         
         # Create base models (frozen, pre-trained)
-        self.nnue = create_nnue_evaluator()
-        self.transformer = create_transformer_model()
+        # Use Stockfish engine for NNUE evaluations (uses downloaded nn-49c1193b131c.nnue)
+        self.nnue = create_nnue_evaluator(
+            weights_path=config.STOCKFISH_NNUE_PATH,
+            use_stockfish=True
+        )
+        
+        # Load pre-trained transformer (uses CT-EFT-85.pt)
+        self.transformer = create_transformer_model(
+            weights_path=config.TRANSFORMER_WEIGHTS_PATH
+        )
         
         # Create trainable components (use config defaults)
         self.projection = create_projection_layer()
         self.selector = create_selector()
         
-        # Load trained weights
+        # Load trained projection and selector weights from hybrid training
         if os.path.exists(checkpoint_path):
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
             
@@ -117,24 +135,38 @@ class HybridChessBot:
             if 'projection_state_dict' in checkpoint:
                 self.projection.load_state_dict(checkpoint['projection_state_dict'])
                 if self.verbose:
-                    print(f"[HybridChessBot] Loaded projection weights")
+                    print(f"  ✓ Loaded trained projection weights")
+            else:
+                if self.verbose:
+                    print(f"  ⚠ No projection weights in checkpoint")
             
             if 'selector_state_dict' in checkpoint:
                 self.selector.load_state_dict(checkpoint['selector_state_dict'])
                 if self.verbose:
-                    print(f"[HybridChessBot] Loaded selector weights")
+                    print(f"  ✓ Loaded trained selector weights")
+            else:
+                if self.verbose:
+                    print(f"  ⚠ No selector weights in checkpoint")
             
             # Print training info if available
-            if self.verbose and 'epoch' in checkpoint:
-                epoch = checkpoint.get('epoch', 'unknown')
-                val_loss = checkpoint.get('val_loss', 'unknown')
-                selector_acc = checkpoint.get('selector_accuracy', 'unknown')
-                print(f"[HybridChessBot] Checkpoint: epoch {epoch}")
-                print(f"[HybridChessBot] Validation loss: {val_loss}")
-                print(f"[HybridChessBot] Selector accuracy: {selector_acc}%")
+            if self.verbose:
+                if 'epoch' in checkpoint:
+                    epoch = checkpoint.get('epoch', 'unknown')
+                    phase = checkpoint.get('phase', 'unknown')
+                    print(f"  ✓ Training checkpoint: Phase {phase}, Epoch {epoch}")
+                
+                history = checkpoint.get('history', {})
+                if history:
+                    last_val_loss = history.get('val_loss', [None])[-1] if 'val_loss' in history else None
+                    last_selector_acc = history.get('selector_accuracy', [None])[-1] if 'selector_accuracy' in history else None
+                    if last_val_loss:
+                        print(f"  ✓ Final validation loss: {last_val_loss:.4f}")
+                    if last_selector_acc:
+                        print(f"  ✓ Final selector accuracy: {last_selector_acc:.2f}%")
         else:
-            print(f"[WARNING] Checkpoint not found: {checkpoint_path}")
-            print(f"[WARNING] Using untrained weights!")
+            print(f"\n[WARNING] Checkpoint not found: {checkpoint_path}")
+            print(f"[WARNING] Using untrained projection/selector weights!")
+            print(f"[WARNING] NNUE and Transformer will still use their pre-trained weights.")
         
         # Create hybrid evaluator
         self.hybrid_evaluator = HybridEvaluator(
