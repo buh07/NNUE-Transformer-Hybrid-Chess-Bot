@@ -56,6 +56,10 @@ PGN_FILES = [
 # Stockfish Target Values
 USE_STOCKFISH_TARGETS = True  # Use Stockfish evaluations instead of game results
 STOCKFISH_TARGET_DEPTH = 10   # Depth for Stockfish evaluation of target values
+# NOTE: Scaling fix applied 2025-11-16 - Stockfish returns normalized [-1,1] values
+# Previous training runs (training_fixed_nnue_20251116_004321.log) used 100x scaling
+# which caused inflated losses (~330k instead of ~30). Models trained before this
+# date have weights scaled 100x larger than post-fix models and are incompatible.
 
 # Training Schedule
 PHASE1_EPOCHS = 25  # Projection layer only (back to original)

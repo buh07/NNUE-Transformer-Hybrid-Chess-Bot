@@ -148,9 +148,12 @@ class HybridTrainer:
             config.NNUE_VALUE_WEIGHT * nnue_values +
             config.TRANSFORMER_VALUE_WEIGHT * transformer_values
         )
-        # Normalize target values to match scale
-        target_values_scaled = target_values * 100.0  # Scale to centipawns
-        value_loss = self.value_criterion(blended_values, target_values_scaled)
+        # NOTE: SCALING FIXED - Stockfish already returns normalized values in [-1, 1]
+        # Previous training (before 2025-11-16) used 100x scaling which caused inflated losses
+        # Models trained with the old scaling are incompatible with this fix
+        # Old: target_values_scaled = target_values * 100.0  # INCORRECT - double normalization
+        # New: Use target values directly (already normalized by Stockfish)
+        value_loss = self.value_criterion(blended_values, target_values)
         
         # Loss 3: Selector training (only in joint phase)
         selector_loss = torch.tensor(0.0, device=self.device)
