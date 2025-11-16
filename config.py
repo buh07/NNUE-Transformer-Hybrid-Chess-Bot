@@ -15,7 +15,7 @@ CHESS_TRANSFORMERS_DIR = os.path.join(PROJECT_ROOT, 'chess-transformers')
 STOCKFISH_BINARY_PATH = os.path.join(STOCKFISH_DIR, 'src', 'stockfish')  # Compiled Stockfish binary
 STOCKFISH_NNUE_PATH = os.path.join(STOCKFISH_DIR, 'src', 'nn-49c1193b131c.nnue')  # Latest big network (110MB, best)
 TRANSFORMER_WEIGHTS_PATH = os.path.join(CHESS_TRANSFORMERS_DIR, 'checkpoints', 'CT-EFT-85', 'CT-EFT-85.pt')  # CT-EFT-85 (~19M params, 73MB, best available)
-HYBRID_CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, 'best_phase2.pt')  # Trained projection + selector weights
+HYBRID_CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, 'final_model_epoch50.pt')  # Trained projection + selector weights (most recent from real data training)
 # Note: All model weights are downloaded and ready to use:
 #   - Stockfish NNUE: nn-49c1193b131c.nnue (110MB, via Stockfish engine)
 #   - ChessTransformer: CT-EFT-85.pt (73MB, pre-trained transformer)
@@ -47,10 +47,10 @@ LR_SCHEDULER_MIN_LR = 1e-6  # Minimum learning rate
 MAX_TRAIN_POSITIONS = 200000  # Increased from 80000 for better training
 MAX_VAL_POSITIONS = 50000     # Increased from 20000 for better validation
 PGN_FILES = [
-    'data/lichess_elite_2024-10.pgn',
-    'data/lichess_elite_2024-09.pgn',
-    'data/lichess_elite_2024-08.pgn',
-    'data/lichess_elite_2024-07.pgn',
+    os.path.join(DATA_DIR, 'lichess_elite_2024-10.pgn'),
+    os.path.join(DATA_DIR, 'lichess_elite_2024-09.pgn'),
+    os.path.join(DATA_DIR, 'lichess_elite_2024-08.pgn'),
+    os.path.join(DATA_DIR, 'lichess_elite_2024-07.pgn'),
 ]  # Lichess Elite games: 2500+ vs 2300+ players
 
 # Stockfish Target Values

@@ -24,6 +24,10 @@ print()
 print("Starting test automatically...\n")
 
 # Run test with reasonable settings
+# Temporarily override stdin to bypass confirmation prompt
+import io
+sys.stdin = io.StringIO('y\n')
+
 results = run_elo_test(
     num_games_per_level=2,  # 2 games per level = 12 total
     bot_config={

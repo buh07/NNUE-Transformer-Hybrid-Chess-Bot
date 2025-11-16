@@ -31,7 +31,6 @@ class NNUEEvaluator(nn.Module):
         self.feature_dim = 45056  # HalfKAv2 input dimension (sparse)
         self.accumulator_dim = 512  # Per-side accumulator
         self.output_dim = config.NNUE_FEATURE_DIM  # 1024 (both accumulators)
-        self.use_stockfish_engine = use_stockfish_engine
         self.engine: Optional[chess.engine.SimpleEngine] = None
         
         # Feature transformer (sparse -> dense accumulator)
@@ -46,47 +45,37 @@ class NNUEEvaluator(nn.Module):
         # Activation
         self.activation = nn.ReLU()
         
-        # Try to use Stockfish engine if requested and available
-        if use_stockfish_engine and hasattr(config, 'STOCKFISH_BINARY_PATH'):
+        # ALWAYS try to use Stockfish engine for consistency between training and inference
+        # This ensures the NNUE features are identical during training and testing
+        if hasattr(config, 'STOCKFISH_BINARY_PATH'):
             if os.path.exists(config.STOCKFISH_BINARY_PATH):
                 try:
                     self.engine = chess.engine.SimpleEngine.popen_uci(config.STOCKFISH_BINARY_PATH)
+                    self.use_stockfish_engine = True
                     print(f"✓ Using Stockfish engine for NNUE evaluations: {config.STOCKFISH_BINARY_PATH}")
+                    print(f"  This ensures consistency between training and inference!")
                 except Exception as e:
                     print(f"⚠ Failed to load Stockfish engine: {e}")
-                    print("  Falling back to learned feature representation")
+                    print(f"  ERROR: Cannot train without Stockfish engine!")
                     self.use_stockfish_engine = False
+                    raise RuntimeError("Stockfish engine required for NNUE evaluations")
             else:
                 print(f"⚠ Stockfish binary not found at {config.STOCKFISH_BINARY_PATH}")
-                print("  Falling back to learned feature representation")
+                print(f"  ERROR: Cannot train without Stockfish engine!")
                 self.use_stockfish_engine = False
-        
-        # Try to load weights if path provided (for learned representation)
-        if not self.use_stockfish_engine:
-            if nnue_weights_path and os.path.exists(nnue_weights_path):
-                self.load_nnue_weights(nnue_weights_path)
-            else:
-                print(f"⚠ NNUE file: {os.path.basename(nnue_weights_path) if nnue_weights_path else 'Not specified'}")
-                print("  Using learned feature representation (will be trained)")
+                raise RuntimeError("Stockfish binary not found")
+        else:
+            print("⚠ STOCKFISH_BINARY_PATH not configured")
+            print("  ERROR: Cannot train without Stockfish engine!")
+            self.use_stockfish_engine = False
+            raise RuntimeError("Stockfish path not configured")
         
         # Freeze parameters - no training for NNUE
         self.eval()
         for param in self.parameters():
             param.requires_grad = False
     
-    def load_nnue_weights(self, path: str):
-        """
-        Load NNUE weights from Stockfish binary format
-        
-        Note: This is a placeholder. Real implementation would need:
-        - Binary parser for Stockfish NNUE format
-        - Or use python-chess with NNUE support
-        - Or convert NNUE to PyTorch format
-        """
-        print(f"TODO: Implement NNUE weight loading from {path}")
-        print("For now using placeholder weights")
-        # Future: Parse binary NNUE file and load weights
-        pass
+
     
     def compute_accumulator(self, board: chess.Board) -> torch.Tensor:
         """
@@ -224,21 +213,22 @@ class NNUEEvaluator(nn.Module):
                 pass
 
 
-def create_nnue_evaluator(weights_path: str = None, use_stockfish: bool = False) -> NNUEEvaluator:
+def create_nnue_evaluator(weights_path: str = None, use_stockfish: bool = True) -> NNUEEvaluator:
     """
     Factory function to create NNUE evaluator
     
     Args:
-        weights_path: Path to NNUE weights file
-        use_stockfish: Whether to use Stockfish engine for evaluations (slower but accurate)
+        weights_path: Path to NNUE weights file (not used, kept for compatibility)
+        use_stockfish: Always True - ensures training/inference consistency
         
     Returns:
-        evaluator: NNUEEvaluator instance
+        evaluator: NNUEEvaluator instance (uses Stockfish engine)
     """
     if weights_path is None:
         weights_path = config.STOCKFISH_NNUE_PATH
     
-    evaluator = NNUEEvaluator(weights_path, use_stockfish_engine=use_stockfish)
+    # Always use Stockfish engine for consistency
+    evaluator = NNUEEvaluator(weights_path, use_stockfish_engine=True)
     return evaluator
 
 
