@@ -129,6 +129,8 @@ class HybridTrainer:
             
             nnue_features = torch.stack(nnue_features_list).to(self.device)
             nnue_values = torch.tensor(nnue_values_list, dtype=torch.float32).to(self.device)
+            # Convert raw centipawn NNUE values into the normalized [-1, 1] range
+            nnue_values = torch.tanh(nnue_values / 400.0)
         
         # Project to transformer space (with gradients)
         projected_features = self.projection(nnue_features)

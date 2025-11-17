@@ -182,19 +182,19 @@ def test_architecture(projection_class, name, nnue_model, transformer_model, val
                 config.TRANSFORMER_VALUE_WEIGHT * transformer_values
             )
             
-            # Compute loss
-            target_values_scaled = target_values * 100.0
-            value_loss = value_criterion(blended_values, target_values_scaled)
+            # Compute loss (targets are in pawns; keep everything in pawns)
+            value_loss = value_criterion(blended_values, target_values)
             
             total_value_loss += value_loss.item()
             num_batches += 1
     
     avg_value_loss = total_value_loss / num_batches
-    centipawns_error = avg_value_loss ** 0.5  # RMSE in centipawns
-    pawns_error = centipawns_error / 100.0
-    
-    print(f"Average Value Loss: {avg_value_loss:.2f}")
-    print(f"RMSE Error: {centipawns_error:.2f} centipawns ({pawns_error:.3f} pawns)")
+    # avg_value_loss is MSE in pawns^2. Report RMSE both in pawns and centipawns.
+    rmse_pawns = avg_value_loss ** 0.5
+    rmse_centipawns = rmse_pawns * 100.0
+
+    print(f"Average Value Loss (MSE, pawns^2): {avg_value_loss:.6f}")
+    print(f"RMSE Error: {rmse_centipawns:.2f} centipawns ({rmse_pawns:.4f} pawns)")
     
     return avg_value_loss, num_params
 

@@ -15,7 +15,7 @@ CHESS_TRANSFORMERS_DIR = os.path.join(PROJECT_ROOT, 'chess-transformers')
 STOCKFISH_BINARY_PATH = os.path.join(STOCKFISH_DIR, 'src', 'stockfish')  # Compiled Stockfish binary
 STOCKFISH_NNUE_PATH = os.path.join(STOCKFISH_DIR, 'src', 'nn-49c1193b131c.nnue')  # Latest big network (110MB, best)
 TRANSFORMER_WEIGHTS_PATH = os.path.join(CHESS_TRANSFORMERS_DIR, 'checkpoints', 'CT-EFT-85', 'CT-EFT-85.pt')  # CT-EFT-85 (~19M params, 73MB, best available)
-HYBRID_CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, 'final_model_epoch50.pt')  # Trained projection + selector weights (most recent from real data training)
+HYBRID_CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, 'final_model.pt')  # Latest projection + selector weights from fast retrain
 # Note: All model weights are downloaded and ready to use:
 #   - Stockfish NNUE: nn-49c1193b131c.nnue (110MB, via Stockfish engine)
 #   - ChessTransformer: CT-EFT-85.pt (73MB, pre-trained transformer)
@@ -44,8 +44,8 @@ LR_SCHEDULER_FACTOR = 0.5  # Multiply LR by this factor when reducing
 LR_SCHEDULER_MIN_LR = 1e-6  # Minimum learning rate
 
 # Dataset
-MAX_TRAIN_POSITIONS = 200000  # Increased from 80000 for better training
-MAX_VAL_POSITIONS = 50000     # Increased from 20000 for better validation
+MAX_TRAIN_POSITIONS = 20000  # Reduced for faster turnaround runs
+MAX_VAL_POSITIONS = 5000     # Reduced validation set for quick checks
 PGN_FILES = [
     os.path.join(DATA_DIR, 'lichess_elite_2024-10.pgn'),
     os.path.join(DATA_DIR, 'lichess_elite_2024-09.pgn'),
@@ -62,8 +62,8 @@ STOCKFISH_TARGET_DEPTH = 10   # Depth for Stockfish evaluation of target values
 # date have weights scaled 100x larger than post-fix models and are incompatible.
 
 # Training Schedule
-PHASE1_EPOCHS = 25  # Projection layer only (back to original)
-PHASE2_EPOCHS = 25  # Projection + selector (back to original)
+PHASE1_EPOCHS = 5   # Shorter projection-only warmup for rapid experiments
+PHASE2_EPOCHS = 5   # Short joint fine-tuning pass
 
 # Loss Weights
 POLICY_LOSS_WEIGHT = 1.0

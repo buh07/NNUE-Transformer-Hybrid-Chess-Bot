@@ -1,0 +1,30 @@
+{
+  "search": {
+    "nodes_searched": 1546,
+    "quiescence_nodes": 2084,
+    "time_elapsed": 5.1643290519714355,
+    "nps": 299.36124992070916,
+    "tt_size": 3545,
+    "tt_hits": 662,
+    "tt_misses": 37163,
+    "tt_hit_rate": 0.017501652346331793
+  },
+  "evaluation": {
+    "nnue_only_evals": 80426,
+    "hybrid_evals": 0,
+    "total_time_nnue": 224.01582717895508,
+    "total_time_hybrid": 0.0,
+    "total_evals": 80426,
+    "cache_hits": 0,
+    "cache_misses": 80426,
+    "transformer_calls": 0,
+    "total_time_transformer": 0.0,
+    "transformer_first_call_time": null
+  },
+  "config": {
+    "max_depth": 5,
+    "time_limit": 5.0,
+    "device": "cuda",
+    "use_time_management": false
+  }
+}

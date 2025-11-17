@@ -18,6 +18,7 @@ from models.projection_layer import create_projection_layer
 from models.selector import create_selector
 from models.hybrid_evaluator import HybridEvaluator
 from search import AlphaBetaSearch
+from utils.chess_utils import index_to_move, get_legal_move_mask
 from time_manager import TimeManager
 import config
 
@@ -93,7 +94,7 @@ class HybridChessBot:
         self.search_engine = AlphaBetaSearch(
             hybrid_evaluator=self.hybrid_evaluator,
             max_depth=self.depth,
-            tt_size=1000000,
+            tt_size=getattr(config, 'TT_SIZE', 2000000),
             use_quiescence=True
         )
         
@@ -122,6 +123,46 @@ class HybridChessBot:
         self.transformer = create_transformer_model(
             weights_path=config.TRANSFORMER_WEIGHTS_PATH
         )
+        # Try to compile the transformer for faster inference when supported.
+        # Compilation can invoke Triton/ptxas which may not be present or may
+        # fail when the path contains spaces. Disable Triton and make Dynamo
+        # fall back to eager on compilation errors to keep runtime robust.
+        try:
+            # Prefer disabling Triton (which needs ptxas) to avoid subprocess
+            # errors when paths contain spaces or ptxas is unavailable.
+            try:
+                os.environ.setdefault('TRITON_DISABLE', '1')
+            except Exception:
+                pass
+
+            # Make Dynamo suppress errors and fallback to eager if compile fails.
+            try:
+                import torch._dynamo as _dynamo
+                _dynamo.config.suppress_errors = True
+            except Exception:
+                # Older torch may not have _dynamo exposed; ignore.
+                pass
+
+            if hasattr(torch, 'compile'):
+                # Only attempt to compile if explicitly enabled via env var.
+                # Compilation can trigger Triton/ptxas which may not be present
+                # or can fail if paths contain spaces. Default is to skip
+                # compilation to avoid hard failures; enable explicitly by
+                # setting HYBRID_ENABLE_TORCH_COMPILE=1 in the environment.
+                if os.environ.get('HYBRID_ENABLE_TORCH_COMPILE', '0') == '1':
+                    try:
+                        self.transformer = torch.compile(self.transformer)
+                        if self.verbose:
+                            print("  ✓ torch.compile() applied to transformer (triton disabled)")
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"  ⚠ torch.compile() failed (fallback to eager): {e}")
+                else:
+                    if self.verbose:
+                        print("  ⚑ torch.compile() disabled by HYBRID_ENABLE_TORCH_COMPILE env var (default) — running eager mode")
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠ Transformer compile guard failed: {e}")
         
         # Create trainable components (use config defaults)
         self.projection = create_projection_layer()
@@ -129,7 +170,12 @@ class HybridChessBot:
         
         # Load trained projection and selector weights from hybrid training
         if os.path.exists(checkpoint_path):
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            # Use weights_only=True when available to avoid unpickling arbitrary objects
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
+            except TypeError:
+                # Older torch versions may not support weights_only kwarg
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
             
             # Load projection and selector weights
             if 'projection_state_dict' in checkpoint:
@@ -148,33 +194,44 @@ class HybridChessBot:
                 if self.verbose:
                     print(f"  ⚠ No selector weights in checkpoint")
             
-            # Print training info if available
-            if self.verbose:
-                if 'epoch' in checkpoint:
-                    epoch = checkpoint.get('epoch', 'unknown')
-                    phase = checkpoint.get('phase', 'unknown')
-                    print(f"  ✓ Training checkpoint: Phase {phase}, Epoch {epoch}")
-                
-                history = checkpoint.get('history', {})
-                if history:
-                    last_val_loss = history.get('val_loss', [None])[-1] if 'val_loss' in history else None
-                    last_selector_acc = history.get('selector_accuracy', [None])[-1] if 'selector_accuracy' in history else None
-                    if last_val_loss:
+            # Print training info if available and detect legacy scaling
+            history = checkpoint.get('history', {})
+            compat_scale = None
+            if history:
+                last_val_loss = history.get('val_loss', [None])[-1] if 'val_loss' in history else None
+                last_selector_acc = history.get('selector_accuracy', [None])[-1] if 'selector_accuracy' in history else None
+                if self.verbose and last_val_loss:
+                    try:
                         print(f"  ✓ Final validation loss: {last_val_loss:.4f}")
-                    if last_selector_acc:
+                    except Exception:
+                        print(f"  ✓ Final validation loss: {last_val_loss}")
+                if self.verbose and last_selector_acc:
+                    try:
                         print(f"  ✓ Final selector accuracy: {last_selector_acc:.2f}%")
+                    except Exception:
+                        print(f"  ✓ Final selector accuracy: {last_selector_acc}")
+
+                # Heuristic: very large validation loss indicates legacy 100x scaling
+                try:
+                    if last_val_loss is not None and float(last_val_loss) > 1000.0:
+                        compat_scale = 100.0
+                        print("\n[WARNING] Checkpoint appears to have been trained with legacy 100x value scaling.")
+                        print("[WARNING] Inference will automatically rescale evaluator outputs by /100 to maintain numeric compatibility.")
+                except Exception:
+                    pass
         else:
             print(f"\n[WARNING] Checkpoint not found: {checkpoint_path}")
             print(f"[WARNING] Using untrained projection/selector weights!")
             print(f"[WARNING] NNUE and Transformer will still use their pre-trained weights.")
         
-        # Create hybrid evaluator
+        # Create hybrid evaluator (pass compatibility scaling if detected)
         self.hybrid_evaluator = HybridEvaluator(
             nnue_model=self.nnue,
             transformer_model=self.transformer,
             projection_layer=self.projection,
             selector=self.selector,
-            device=self.device
+            device=self.device,
+            compatibility_scale=compat_scale
         )
         
         # Set to evaluation mode
@@ -242,13 +299,39 @@ class HybridChessBot:
             time_used = time.time() - move_start_time
             self.time_manager.update_after_move(time_used)
         
+        # Defensive fallback: if search returned None, pick a sensible legal move
+        if best_move is None:
+            if self.verbose:
+                print("[WARNING] Search returned None for best_move — applying fallback policy-based move selection.")
+
+            # Try to obtain policy distribution from evaluator and map to a legal move
+            try:
+                legal_mask = get_legal_move_mask(board).to(self.device)
+                policy_probs, _value, _method = self.hybrid_evaluator.evaluate(board, depth_remaining=self.depth, legal_mask=legal_mask)
+
+                # Mask illegal moves and pick highest-probability legal move
+                masked_probs = policy_probs * legal_mask.float()
+                best_idx = int(masked_probs.argmax().item())
+                fallback_move = index_to_move(best_idx, board)
+                if fallback_move is None:
+                    # As a last resort, choose a random legal move
+                    fallback_move = next(iter(board.legal_moves), None)
+
+                best_move = fallback_move
+                if self.verbose:
+                    print(f"[Fallback] Chosen move from policy: {best_move}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"[ERROR] Fallback policy selection failed: {e}. Choosing first legal move.")
+                best_move = next(iter(board.legal_moves), None)
+
         # Print statistics if verbose
         if self.verbose:
             stats = self.search_engine.get_statistics()
             eval_stats = self.hybrid_evaluator.stats
-            
+            move_str = best_move.uci() if best_move is not None else 'None'
             print(f"\n[Search Statistics]")
-            print(f"  Move: {best_move.uci()} (score: {score:.2f})")
+            print(f"  Move: {move_str} (score: {score:.2f})")
             print(f"  Nodes: {stats['nodes_searched']:,}")
             print(f"  Time: {stats['time_elapsed']:.2f}s")
             print(f"  NPS: {stats['nps']:,.0f}")
@@ -258,7 +341,7 @@ class HybridChessBot:
             if eval_stats['total_evals'] > 0:
                 transformer_pct = 100 * eval_stats['hybrid_evals'] / eval_stats['total_evals']
                 print(f"  Transformer usage: {transformer_pct:.1f}%")
-        
+
         return best_move
     
     def get_statistics(self) -> dict:

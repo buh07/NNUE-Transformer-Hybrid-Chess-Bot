@@ -7,6 +7,9 @@ import chess
 import chess.engine
 import time
 import sys
+import os
+import random
+import json
 from pathlib import Path
 from HybridChessBot import HybridChessBot
 
@@ -101,27 +104,40 @@ def play_game(white_bot, black_bot, white_name: str, black_name: str,
             move = current_bot.choose_move(board)
             elapsed = time.time() - start_time
             move_times[color].append(elapsed)
-            
+
+            # Fallback if bot returned None
+            if move is None:
+                legal = list(board.legal_moves)
+                if legal:
+                    move = random.choice(legal)
+                    if verbose:
+                        print(f"  WARNING: {bot_name} returned None; falling back to legal move {move.uci()}")
+                else:
+                    raise RuntimeError("No legal moves available to fall back to")
+
             if verbose:
                 print(f"  {bot_name} plays: {move.uci()} ({elapsed:.2f}s)")
-            
+
             # Make move
             board.push(move)
-            
+
             if verbose and move_count % 10 == 0:
                 print(f"\nPosition after move {move_count}:")
                 print(board)
                 print()
-        
+
         except Exception as e:
             print(f"ERROR: {bot_name} failed to choose move: {e}")
             # Award loss to player who errored
             result = "0-1" if board.turn == chess.WHITE else "1-0"
+            # Ensure result dict includes player names to avoid KeyError later
             return {
                 'result': result,
                 'termination': 'error',
                 'moves': move_count,
-                'error': str(e)
+                'error': str(e),
+                'white_name': white_name,
+                'black_name': black_name
             }
     
     # Determine result
@@ -313,7 +329,14 @@ def main():
     print("5. Custom")
     print()
     
-    choice = input("Choose configuration (1-5): ").strip()
+    # Non-interactive auto mode: pass 'auto' as a command-line argument or set AUTO_RUN=1
+    auto = ('auto' in sys.argv) or (os.environ.get('AUTO_RUN') == '1')
+    if auto:
+        # Quick test by default in auto mode
+        choice = '1'
+        print("Auto mode enabled: selecting quick test (1)")
+    else:
+        choice = input("Choose configuration (1-5): ").strip()
     
     if choice == '1':
         num_games = 2
@@ -360,7 +383,10 @@ def main():
     print(f"  Hybrid: Depth {hybrid_depth}, Time {hybrid_time}s")
     print(f"{'='*60}\n")
     
-    input("Press Enter to start match...")
+    if not auto:
+        input("Press Enter to start match...")
+    else:
+        print("Starting match immediately (auto mode)...")
     
     # Create bots
     print("\nInitializing bots...")
@@ -408,7 +434,18 @@ def main():
                 f.write(f"  Moves: {game['moves']}\n")
                 f.write(f"  Termination: {game['termination']}\n")
         
-        print(f"\nResults saved to: {results_file}")
+        # Also collect and save hybrid bot instrumentation/statistics when available
+        try:
+            bot_stats = hybrid_bot.get_statistics()
+            stats_file = results_file.replace('.txt', '_stats.json')
+            with open(stats_file, 'w') as sf:
+                json.dump(bot_stats, sf, indent=2, default=str)
+            print(f"\nResults saved to: {results_file}")
+            print(f"Instrumentation stats saved to: {stats_file}")
+        except Exception as e:
+            # Non-fatal: just report and continue
+            print(f"\nResults saved to: {results_file}")
+            print(f"Warning: failed to save instrumentation stats: {e}")
         
     finally:
         # Cleanup

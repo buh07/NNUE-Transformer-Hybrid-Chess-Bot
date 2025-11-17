@@ -1,0 +1,17 @@
+Match: HybridBot vs Stockfish
+Date: 2025-11-16 19:45:16
+Games: 2
+Result: 0 - 2
+Record: 0W - 2L - 0D
+
+Game details:
+
+Game 1:
+  Result: 0-1
+  Moves: 16
+  Termination: checkmate
+
+Game 2:
+  Result: 1-0
+  Moves: 17
+  Termination: checkmate
