@@ -34,12 +34,12 @@ class HybridChessBot:
     - 97.56% accurate position type classification
     
     Usage:
-        bot = HybridChessBot(checkpoint='checkpoints/best_phase2.pt', depth=5)
+        bot = HybridChessBot(checkpoint='checkpoints/best_phase2.pt', depth=None)
         move = bot.choose_move(board)
     """
     
     def __init__(self, checkpoint: str = None, 
-                 depth: int = 5, time_limit: float = 5.0,
+                 depth: int = None, time_limit: float = 5.0,
                  device: str = None, verbose: bool = False,
                  use_time_management: bool = False,
                  total_game_time: float = None,
@@ -49,7 +49,7 @@ class HybridChessBot:
         
         Args:
             checkpoint: Path to trained model checkpoint (default: config.HYBRID_CHECKPOINT_PATH)
-            depth: Maximum search depth (default: 5)
+            depth: Optional maximum search depth. Set to None or <=0 to rely fully on time controls.
             time_limit: Time limit per move in seconds (default: 5.0)
             device: 'cuda' or 'cpu' (auto-detect if None)
             verbose: Print search statistics
@@ -58,7 +58,7 @@ class HybridChessBot:
             evaluation_mode: 'auto' (selector decides), 'nnue', or 'transformer'
         """
         self.verbose = verbose
-        self.depth = depth
+        self.max_search_depth = depth if (depth is not None and depth > 0) else None
         self.time_limit = time_limit
         self.use_time_management = use_time_management
         self.evaluation_mode = evaluation_mode
@@ -94,15 +94,17 @@ class HybridChessBot:
         self._load_models(checkpoint, evaluation_mode=self.evaluation_mode)
         
         # Initialize search engine
+        engine_default_depth = self.max_search_depth or getattr(config, 'MAX_SEARCH_DEPTH', 18)
         self.search_engine = AlphaBetaSearch(
             hybrid_evaluator=self.hybrid_evaluator,
-            max_depth=self.depth,
+            max_depth=engine_default_depth,
             tt_size=getattr(config, 'TT_SIZE', 2000000),
             use_quiescence=True
         )
         
         if self.verbose:
-            print(f"[HybridChessBot] Ready! Max depth: {self.depth}")
+            depth_msg = self.max_search_depth if self.max_search_depth else f"time-based (<= {engine_default_depth})"
+            print(f"[HybridChessBot] Ready! Max depth: {depth_msg}")
             print(f"[HybridChessBot] Projection params: {self._count_params(self.projection):,}")
             print(f"[HybridChessBot] Selector params: {self._count_params(self.selector):,}")
     
@@ -270,10 +272,11 @@ class HybridChessBot:
             move_start_time = time.time()
             
             # Get dynamic time allocation based on position complexity
+            depth_hint = self.max_search_depth or getattr(config, 'MAX_SEARCH_DEPTH', 18)
             time_alloc = self.time_manager.allocate_time(
                 board=board,
                 selector_model=self.selector,
-                depth_remaining=self.depth
+                depth_remaining=depth_hint
             )
             
             time_for_move = time_alloc['allocated_time']
@@ -294,7 +297,7 @@ class HybridChessBot:
         # Run iterative deepening search with time limit
         best_move, score = self.search_engine.iterative_deepening(
             board=board,
-            max_depth=self.depth,
+            max_depth=self.max_search_depth,
             time_limit=time_for_move
         )
         
@@ -312,7 +315,8 @@ class HybridChessBot:
             # Try to obtain policy distribution from evaluator and map to a legal move
             try:
                 legal_mask = get_legal_move_mask(board).to(self.device)
-                policy_probs, _value, _method = self.hybrid_evaluator.evaluate(board, depth_remaining=self.depth, legal_mask=legal_mask)
+                depth_remaining = self.max_search_depth or getattr(config, 'MAX_SEARCH_DEPTH', 18)
+                policy_probs, _value, _method = self.hybrid_evaluator.evaluate(board, depth_remaining=depth_remaining, legal_mask=legal_mask)
 
                 # Mask illegal moves and pick highest-probability legal move
                 masked_probs = policy_probs * legal_mask.float()
@@ -363,7 +367,8 @@ class HybridChessBot:
             'search': search_stats,
             'evaluation': eval_stats,
             'config': {
-                'max_depth': self.depth,
+                'max_depth': self.max_search_depth,
+                'time_based_search': self.max_search_depth is None,
                 'time_limit': self.time_limit,
                 'device': self.device,
                 'use_time_management': self.use_time_management,
@@ -400,7 +405,8 @@ class HybridChessBot:
         Returns:
             Dictionary with analysis results
         """
-        depth = depth or self.depth
+        if depth is None or depth <= 0:
+            depth = self.max_search_depth or getattr(config, 'MAX_SEARCH_DEPTH', 18)
         
         # Get best move and evaluation
         best_move, score = self.search_engine.iterative_deepening(
@@ -424,7 +430,7 @@ class HybridChessBot:
 
 
 def create_hybrid_bot(checkpoint: str = 'checkpoints/best_phase2.pt',
-                     depth: int = 5, 
+                     depth: int = None, 
                      time_limit: float = 5.0,
                      verbose: bool = False) -> HybridChessBot:
     """
@@ -432,7 +438,7 @@ def create_hybrid_bot(checkpoint: str = 'checkpoints/best_phase2.pt',
     
     Args:
         checkpoint: Path to trained checkpoint
-        depth: Maximum search depth
+        depth: Optional depth cap (None = time-based)
         time_limit: Time limit per move
         verbose: Print statistics
         
@@ -458,7 +464,8 @@ if __name__ == '__main__':
     # Create bot
     bot = HybridChessBot(
         checkpoint='checkpoints/best_phase2.pt',
-        depth=5,
+        depth=None,
+        time_limit=3.0,
         verbose=True
     )
     

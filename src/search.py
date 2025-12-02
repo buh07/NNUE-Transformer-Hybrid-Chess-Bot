@@ -297,8 +297,14 @@ class AlphaBetaSearch:
         Returns:
             (best_move, score, stats) tuple
         """
-        if max_depth is None:
-            max_depth = self.max_depth
+        time_based_only = False
+        if max_depth is None or max_depth <= 0:
+            if time_limit is None:
+                max_depth = self.max_depth
+            else:
+                max_depth = None
+                time_based_only = True
+        effective_max_depth = max_depth
         
         self.start_time = time.time()
         self.time_limit = time_limit
@@ -307,9 +313,14 @@ class AlphaBetaSearch:
         
         best_move = None
         best_score = float('-inf')
+        last_completed_depth = 0
         
         # Iterative deepening
-        for depth in range(1, max_depth + 1):
+        depth = 0
+        while True:
+            if not time_based_only and effective_max_depth is not None and depth >= effective_max_depth:
+                break
+            depth += 1
             try:
                 score, move = self.alpha_beta(board, depth, float('-inf'), float('inf'), True)
                 
@@ -319,6 +330,7 @@ class AlphaBetaSearch:
                 
                 best_move = move
                 best_score = score
+                last_completed_depth = depth
                 
                 elapsed = time.time() - self.start_time
                 nps = self.nodes_searched / elapsed if elapsed > 0 else 0
@@ -326,6 +338,8 @@ class AlphaBetaSearch:
                 print(f"Depth {depth}: score={score:.3f}, move={move}, "
                       f"nodes={self.nodes_searched}, time={elapsed:.2f}s, nps={nps:.0f}")
                 
+                if self.time_limit and elapsed >= self.time_limit:
+                    break
             except Exception as e:
                 print(f"Search interrupted at depth {depth}: {e}")
                 break
@@ -335,7 +349,7 @@ class AlphaBetaSearch:
         tt_stats = self.tt.get_stats()
         
         stats = {
-            'depth': depth,
+            'depth': last_completed_depth,
             'nodes': self.nodes_searched,
             'quiescence_nodes': self.quiescence_nodes,
             'time': elapsed,

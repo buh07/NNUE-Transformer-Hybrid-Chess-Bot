@@ -175,7 +175,7 @@ def run_elo_test(num_games_per_level: int = 4,
     # Default bot configuration
     if bot_config is None:
         bot_config = {
-            'depth': 5,
+            'depth': None,
             'time_limit': 5.0,
             'use_time_management': False
         }

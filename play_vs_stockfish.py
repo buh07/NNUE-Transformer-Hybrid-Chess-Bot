@@ -343,28 +343,28 @@ def main():
         sf_elo = None
         sf_depth = 5
         sf_time = None
-        hybrid_depth = 5
+        hybrid_depth = None
         hybrid_time = 5.0
     elif choice == '2':
         num_games = 4
         sf_elo = None
         sf_depth = 8
         sf_time = None
-        hybrid_depth = 6
+        hybrid_depth = None
         hybrid_time = 10.0
     elif choice == '3':
         num_games = 4
         sf_elo = 1500
         sf_depth = None
         sf_time = 1.0
-        hybrid_depth = 5
+        hybrid_depth = None
         hybrid_time = 5.0
     elif choice == '4':
         num_games = 4
         sf_elo = 2000
         sf_depth = None
         sf_time = 1.0
-        hybrid_depth = 6
+        hybrid_depth = None
         hybrid_time = 5.0
     else:
         num_games = int(input("Number of games: "))
@@ -372,7 +372,10 @@ def main():
         sf_elo = int(sf_elo_input) if sf_elo_input else None
         sf_depth = int(input("Stockfish depth (0 for time-based): ") or 0) or None
         sf_time = float(input("Stockfish time per move (s): ") or 1.0)
-        hybrid_depth = int(input("Hybrid bot depth: ") or 5)
+        hybrid_depth_input = input("Hybrid bot max depth (0 for auto/time-based): ")
+        hybrid_depth = int(hybrid_depth_input) if hybrid_depth_input else None
+        if hybrid_depth == 0:
+            hybrid_depth = None
         hybrid_time = float(input("Hybrid bot time per move (s): ") or 5.0)
     
     # Evaluation mode selection
@@ -395,7 +398,8 @@ def main():
     print(f"  Games: {num_games}")
     print(f"  Stockfish: {'ELO ' + str(sf_elo) if sf_elo else 'Full strength'}")
     print(f"  Stockfish: {'Depth ' + str(sf_depth) if sf_depth else f'Time {sf_time}s'}")
-    print(f"  Hybrid: Depth {hybrid_depth}, Time {hybrid_time}s, Eval mode: {eval_mode}")
+    depth_display = "auto (time-based)" if not hybrid_depth else str(hybrid_depth)
+    print(f"  Hybrid: Depth {depth_display}, Time {hybrid_time}s, Eval mode: {eval_mode}")
     print(f"{'='*60}\n")
     
     if not auto:

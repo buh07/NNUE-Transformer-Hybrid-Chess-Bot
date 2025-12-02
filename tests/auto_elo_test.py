@@ -31,7 +31,7 @@ sys.stdin = io.StringIO('y\n')
 results = run_elo_test(
     num_games_per_level=2,  # 2 games per level = 12 total
     bot_config={
-        'depth': 5,
+        'depth': None,
         'time_limit': 5.0,
         'use_time_management': False,
         'verbose': False
