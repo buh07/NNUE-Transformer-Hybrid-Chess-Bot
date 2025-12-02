@@ -43,7 +43,8 @@ class HybridEvaluator:
                  projection_layer: ProjectionLayer,
                  selector: SelectionFunction,
                  device: str = 'cpu',
-                 compatibility_scale: float = None):
+                 compatibility_scale: float = None,
+                 evaluation_mode: str = 'auto'):
         """
         Initialize hybrid evaluator
         
@@ -78,9 +79,16 @@ class HybridEvaluator:
         # transformer forwards for repeated positions (keyed by FEN + depth)
         self._cache_size = getattr(config, 'EVAL_CACHE_SIZE', 1024)
         self._eval_cache = OrderedDict()
+        self._eval_mode = self._normalize_mode(evaluation_mode)
 
         # Statistics for monitoring
-        self.stats = {
+        self.stats = self._init_stats()
+        # Internal flag to mark whether we've seen the first transformer forward
+        self._seen_first_transformer_call = False
+
+    def _init_stats(self) -> Dict:
+        """Initialize evaluation statistics dictionary."""
+        return {
             'nnue_only_evals': 0,
             'hybrid_evals': 0,
             'total_time_nnue': 0.0,
@@ -93,10 +101,47 @@ class HybridEvaluator:
             'transformer_calls': 0,
             'total_time_transformer': 0.0,
             # If the first transformer call includes compile time, it will be recorded here
-            'transformer_first_call_time': None
+            'transformer_first_call_time': None,
+            'evaluation_mode': self._eval_mode
         }
-        # Internal flag to mark whether we've seen the first transformer forward
-        self._seen_first_transformer_call = False
+
+    def reset_statistics(self):
+        """Alias for reset_stats for backwards compatibility."""
+        self.reset_stats()
+
+    def _normalize_mode(self, mode: str) -> str:
+        """Normalize evaluation mode string."""
+        if not mode:
+            return 'auto'
+        normalized = mode.strip().lower()
+        if normalized in ('auto', 'hybrid', 'default'):
+            return 'auto'
+        if normalized in ('nnue', 'nnue_only', 'stockfish'):
+            return 'nnue'
+        if normalized in ('transformer', 'transformer_only', 'chessformer'):
+            return 'transformer'
+        raise ValueError(f"Unknown evaluation_mode '{mode}'. Expected 'auto', 'nnue', or 'transformer'.")
+
+    def set_evaluation_mode(self, mode: str):
+        """
+        Override selector decisions and force evaluation mode.
+        
+        Args:
+            mode: 'auto', 'nnue', or 'transformer'
+        """
+        self._eval_mode = self._normalize_mode(mode)
+        # Persist mode info in stats for downstream logging
+        if hasattr(self, 'stats'):
+            self.stats['evaluation_mode'] = self._eval_mode
+
+    @property
+    def evaluation_mode(self) -> str:
+        """Current evaluation mode."""
+        return self._eval_mode
+
+    def _cache_mode_token(self) -> str:
+        """Token used to differentiate cache entries per evaluation mode."""
+        return self._eval_mode
     
     def evaluate(self, board: chess.Board, depth_remaining: int = 10,
                 legal_mask: torch.Tensor = None) -> Tuple[torch.Tensor, float, str]:
@@ -117,7 +162,7 @@ class HybridEvaluator:
 
         # Cache key: FEN + depth_remaining (simple and robust); avoids
         # repeated transformer evaluations for identical states during search.
-        cache_key = (board.fen(), int(depth_remaining))
+        cache_key = (board.fen(), int(depth_remaining), self._cache_mode_token())
         cached = self._eval_cache.get(cache_key)
         if cached is not None:
             # Cache hit
@@ -143,7 +188,12 @@ class HybridEvaluator:
         selection_features = extract_selection_features(board, depth_remaining)
         selection_features = selection_features.to(self.device)
         
-        use_transformer = self.selector.should_use_transformer(selection_features)
+        if self._eval_mode == 'nnue':
+            use_transformer = False
+        elif self._eval_mode == 'transformer':
+            use_transformer = True
+        else:
+            use_transformer = self.selector.should_use_transformer(selection_features)
         
         # Get legal mask if not provided
         if legal_mask is None:
@@ -373,18 +423,7 @@ class HybridEvaluator:
     
     def reset_stats(self):
         """Reset statistics"""
-        self.stats = {
-            'nnue_only_evals': 0,
-            'hybrid_evals': 0,
-            'total_time_nnue': 0.0,
-            'total_time_hybrid': 0.0,
-            'total_evals': 0,
-            'cache_hits': 0,
-            'cache_misses': 0,
-            'transformer_calls': 0,
-            'total_time_transformer': 0.0,
-            'transformer_first_call_time': None
-        }
+        self.stats = self._init_stats()
         self._seen_first_transformer_call = False
 
     def get_stats(self) -> Dict:

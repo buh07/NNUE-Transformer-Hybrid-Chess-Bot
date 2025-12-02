@@ -1,17 +1,36 @@
 import time
 import torch
 import json
+import argparse
+import os
 from HybridChessBot import HybridChessBot
 import chess
 from src.utils.chess_utils import extract_selection_features
 import config
 
+parser = argparse.ArgumentParser(description="Diagnose transformer/selector behaviour.")
+parser.add_argument(
+    "--eval-mode",
+    choices=["auto", "nnue", "transformer"],
+    default=os.environ.get("HYBRID_EVAL_MODE", "auto"),
+    help="Force HybridEvaluator mode for ablation experiments."
+)
+args = parser.parse_args()
+eval_mode = args.eval_mode
+
 print("Instantiating bot (will load selector+projection checkpoint)...")
-bot = HybridChessBot(checkpoint='checkpoints/best_phase2.pt', depth=5, time_limit=1.0, verbose=False)
+bot = HybridChessBot(
+    checkpoint='checkpoints/best_phase2.pt',
+    depth=5,
+    time_limit=1.0,
+    verbose=False,
+    evaluation_mode=eval_mode
+)
 print('device=', bot.device)
 print('CONFIG: TRANSFORMER_VALUE_WEIGHT=', config.TRANSFORMER_VALUE_WEIGHT,
       'NNUE_VALUE_WEIGHT=', config.NNUE_VALUE_WEIGHT,
-      'SELECTOR_THRESHOLD=', config.SELECTOR_THRESHOLD)
+      'SELECTOR_THRESHOLD=', config.SELECTOR_THRESHOLD,
+      'EVAL_MODE=', bot.evaluation_mode)
 
 sel = bot.selector
 threshold = config.SELECTOR_THRESHOLD

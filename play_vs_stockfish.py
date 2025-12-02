@@ -375,12 +375,27 @@ def main():
         hybrid_depth = int(input("Hybrid bot depth: ") or 5)
         hybrid_time = float(input("Hybrid bot time per move (s): ") or 5.0)
     
+    # Evaluation mode selection
+    eval_mode_env = os.environ.get('HYBRID_EVAL_MODE', 'auto')
+    valid_modes = {'auto', 'nnue', 'transformer'}
+    if auto:
+        eval_mode = eval_mode_env if eval_mode_env in valid_modes else 'auto'
+    else:
+        eval_mode_input = input("Evaluation mode (auto/nnue/transformer) [auto]: ").strip().lower()
+        if eval_mode_input:
+            eval_mode = eval_mode_input
+        else:
+            eval_mode = eval_mode_env if eval_mode_env in valid_modes else 'auto'
+        if eval_mode not in valid_modes:
+            print(f"Unknown evaluation mode '{eval_mode}', defaulting to 'auto'.")
+            eval_mode = 'auto'
+    
     print(f"\n{'='*60}")
     print("Match Configuration:")
     print(f"  Games: {num_games}")
     print(f"  Stockfish: {'ELO ' + str(sf_elo) if sf_elo else 'Full strength'}")
     print(f"  Stockfish: {'Depth ' + str(sf_depth) if sf_depth else f'Time {sf_time}s'}")
-    print(f"  Hybrid: Depth {hybrid_depth}, Time {hybrid_time}s")
+    print(f"  Hybrid: Depth {hybrid_depth}, Time {hybrid_time}s, Eval mode: {eval_mode}")
     print(f"{'='*60}\n")
     
     if not auto:
@@ -395,7 +410,8 @@ def main():
         checkpoint='checkpoints/best_phase2.pt',
         depth=hybrid_depth,
         time_limit=hybrid_time,
-        verbose=False  # Set to True for detailed output
+        verbose=False,  # Set to True for detailed output
+        evaluation_mode=eval_mode
     )
     print("✓ Hybrid bot ready")
     

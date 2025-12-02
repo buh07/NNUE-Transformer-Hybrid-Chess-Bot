@@ -42,7 +42,8 @@ class HybridChessBot:
                  depth: int = 5, time_limit: float = 5.0,
                  device: str = None, verbose: bool = False,
                  use_time_management: bool = False,
-                 total_game_time: float = None):
+                 total_game_time: float = None,
+                 evaluation_mode: str = 'auto'):
         """
         Initialize the hybrid chess bot with ALL downloaded weights.
         
@@ -54,11 +55,13 @@ class HybridChessBot:
             verbose: Print search statistics
             use_time_management: Enable dynamic time allocation (default: False)
             total_game_time: Total time for game in seconds (required if use_time_management=True)
+            evaluation_mode: 'auto' (selector decides), 'nnue', or 'transformer'
         """
         self.verbose = verbose
         self.depth = depth
         self.time_limit = time_limit
         self.use_time_management = use_time_management
+        self.evaluation_mode = evaluation_mode
         
         # Initialize time manager if requested
         if use_time_management:
@@ -88,7 +91,7 @@ class HybridChessBot:
             checkpoint = os.path.join(os.path.dirname(__file__), checkpoint)
         
         # Load models (with ALL downloaded weights)
-        self._load_models(checkpoint)
+        self._load_models(checkpoint, evaluation_mode=self.evaluation_mode)
         
         # Initialize search engine
         self.search_engine = AlphaBetaSearch(
@@ -103,7 +106,7 @@ class HybridChessBot:
             print(f"[HybridChessBot] Projection params: {self._count_params(self.projection):,}")
             print(f"[HybridChessBot] Selector params: {self._count_params(self.selector):,}")
     
-    def _load_models(self, checkpoint_path: str):
+    def _load_models(self, checkpoint_path: str, evaluation_mode: str = 'auto'):
         """Load all model components and trained weights."""
         if self.verbose:
             print(f"\n[HybridChessBot] Loading ALL available weights:")
@@ -231,8 +234,10 @@ class HybridChessBot:
             projection_layer=self.projection,
             selector=self.selector,
             device=self.device,
-            compatibility_scale=compat_scale
+            compatibility_scale=compat_scale,
+            evaluation_mode=evaluation_mode
         )
+        self.evaluation_mode = self.hybrid_evaluator.evaluation_mode
         
         # Set to evaluation mode
         self.projection.eval()
@@ -361,7 +366,8 @@ class HybridChessBot:
                 'max_depth': self.depth,
                 'time_limit': self.time_limit,
                 'device': self.device,
-                'use_time_management': self.use_time_management
+                'use_time_management': self.use_time_management,
+                'evaluation_mode': self.evaluation_mode
             }
         }
         
@@ -370,17 +376,18 @@ class HybridChessBot:
             stats['time_management'] = self.time_manager.get_statistics()
         
         return stats
+
+    def set_evaluation_mode(self, mode: str):
+        """
+        Force evaluation mode (auto/nnue/transformer).
+        """
+        self.hybrid_evaluator.set_evaluation_mode(mode)
+        self.evaluation_mode = self.hybrid_evaluator.evaluation_mode
     
     def reset_statistics(self):
         """Reset all statistics counters."""
         self.search_engine.reset_statistics()
-        self.hybrid_evaluator.stats = {
-            'nnue_only_evals': 0,
-            'hybrid_evals': 0,
-            'total_time_nnue': 0.0,
-            'total_time_hybrid': 0.0,
-            'total_evals': 0
-        }
+        self.hybrid_evaluator.reset_stats()
     
     def analyze_position(self, board: chess.Board, depth: int = None) -> dict:
         """
