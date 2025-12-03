@@ -76,3 +76,5 @@ logs/
 # Tests output (can be regenerated)
 tests/__pycache__/
 tests/*.pyc
+# Stockfish NNUE weights (never commit)
+nn-*.nnue
