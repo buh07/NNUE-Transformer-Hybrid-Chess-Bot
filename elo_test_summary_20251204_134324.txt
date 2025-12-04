@@ -1,0 +1,36 @@
+ELO Rating Test Results
+======================================================================
+
+Date: 2025-12-04 13:43:24
+Test Duration: 35.9 minutes
+
+Bot Configuration:
+  depth: 4
+  time_limit: 3.0
+
+Results:
+  Games Played: 12
+  Record: 8W - 2L - 2D
+  Win Rate: 75.0%
+
+ELO Rating:
+  Estimated ELO: 1998 ± 40
+  Rating Range: 1957 - 2038
+
+Opponents Faced:
+  Range: ELO 1350 - 2100
+  Average: ELO 1725
+
+Game-by-Game Results:
+  Game 1: vs SF-1350 (white) - WIN (81 moves)
+  Game 2: vs SF-1350 (black) - WIN (40 moves)
+  Game 3: vs SF-1500 (white) - WIN (73 moves)
+  Game 4: vs SF-1500 (black) - WIN (102 moves)
+  Game 5: vs SF-1650 (white) - DRAW (150 moves)
+  Game 6: vs SF-1650 (black) - DRAW (150 moves)
+  Game 7: vs SF-1800 (white) - WIN (51 moves)
+  Game 8: vs SF-1800 (black) - WIN (96 moves)
+  Game 9: vs SF-1950 (white) - LOSS (104 moves)
+  Game 10: vs SF-1950 (black) - WIN (78 moves)
+  Game 11: vs SF-2100 (white) - WIN (85 moves)
+  Game 12: vs SF-2100 (black) - LOSS (79 moves)

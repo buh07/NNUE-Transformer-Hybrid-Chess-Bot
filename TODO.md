@@ -1,5 +1,19 @@
 # TODO
 
+## 0. Search Stability Hotfixes (blocker for Stockfish parity)
+
+- [ ] **Repair quiescence perspective sign flip**  
+  1. Audit `AlphaBetaSearch.evaluate_position` (`src/search.py`) to confirm it always returns a White-centric score (it does).  
+  2. Refactor `quiescence_search` so it stays consistent with that convention instead of using the negamax `-score` trick. A minimal fix: pass an `is_maximizing` flag (same as the main search) into quiescence, remove the unconditional negation, and compare `stand_pat`/child scores directly just as `alpha_beta` does.  
+  3. After the change, add/extend a micro-test (e.g., new helper in `test_search.py` or `test_black_search_debug.py`) that constructs a simple capture-only line where Black is winning and ensures quiescence still returns a negative number.  
+  4. Run `python test_search_perspective.py` and a short Stockfish match to confirm no more “false winning eval” spikes occur.
+
+- [ ] **Store correct TT bounds**  
+  1. In `AlphaBetaSearch.alpha_beta`, save `alpha_orig, beta_orig = alpha, beta` before the move loop.  
+  2. Use those originals when deciding the entry type after the loop (`if best_score <= alpha_orig: UPPER`, `elif best_score >= beta_orig: LOWER`, else `EXACT`). This keeps TT semantics aligned with standard alpha-beta theory.  
+  3. Add a regression check in `tests/test_search.py` that mocks a cached node and verifies we record at least one `EXACT` hit when the stored depth equals the search depth.  
+  4. Re-run `python tests/test_search.py` and a quick Stockfish match to verify the TT hit rate climbs and Elo no longer collapses.
+
 ## 1. Verify Chessformer Value vs Baseline Stockfish (and retrain selector if needed)
 
 - [ ] **Create reproducible ablations** – add an option to `HybridChessBot`/`HybridEvaluator` (e.g., `force_nnue_only`, `force_transformer`) so `play_vs_stockfish.py` and `tools/diagnose_transformer.py` can run matches where the transformer is never consulted. This makes it easy to compare NNUE-only, hybrid, and transformer-only variants with identical search settings.

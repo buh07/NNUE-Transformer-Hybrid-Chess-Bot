@@ -295,6 +295,12 @@ class HybridChessBot:
             move_start_time = None
         
         # Run iterative deepening search with time limit
+        prepare_fn = getattr(self.hybrid_evaluator, 'prepare_search', None)
+        if callable(prepare_fn):
+            try:
+                prepare_fn(board)
+            except Exception:
+                pass
         best_move, score = self.search_engine.iterative_deepening(
             board=board,
             max_depth=self.max_search_depth,

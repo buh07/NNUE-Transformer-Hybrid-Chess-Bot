@@ -134,7 +134,7 @@ class AlphaBetaSearch:
         return [move for _, move in scored_moves]
     
     def quiescence_search(self, board: chess.Board, alpha: float, beta: float, 
-                          max_depth: int = 4) -> float:
+                          max_depth: int = 4, is_maximizing: bool = True) -> float:
         """
         Quiescence search to avoid horizon effect.
         Only searches capture moves to reach a "quiet" position.
@@ -144,38 +144,73 @@ class AlphaBetaSearch:
         
         self.quiescence_nodes += 1
         
-        # Stand-pat evaluation
+        # Stand-pat evaluation (always from White's POV)
         stand_pat = self.evaluate_position(board)
         
-        if stand_pat >= beta:
-            return beta
-        if alpha < stand_pat:
-            alpha = stand_pat
+        if is_maximizing:
+            if stand_pat >= beta:
+                return beta
+            if stand_pat > alpha:
+                alpha = stand_pat
+        else:
+            if stand_pat <= alpha:
+                return alpha
+            if stand_pat < beta:
+                beta = stand_pat
         
         # Only search captures
         captures = [move for move in board.legal_moves if board.is_capture(move)]
         captures = self.order_moves(board, captures)
         
         for move in captures:
-            board.push(move)
-            score = -self.quiescence_search(board, -beta, -alpha, max_depth - 1)
-            board.pop()
+            self._push_move(board, move)
+            score = self.quiescence_search(
+                board, alpha, beta, max_depth - 1, not is_maximizing
+            )
+            self._pop_move(board)
             
-            if score >= beta:
-                return beta
-            if score > alpha:
-                alpha = score
+            if is_maximizing:
+                if score > alpha:
+                    alpha = score
+                if alpha >= beta:
+                    break
+            else:
+                if score < beta:
+                    beta = score
+                if beta <= alpha:
+                    break
         
-        return alpha
+        return alpha if is_maximizing else beta
+
+    def _push_move(self, board: chess.Board, move: chess.Move):
+        board.push(move)
+        hook = getattr(self.evaluator, 'on_push_move', None)
+        if callable(hook):
+            try:
+                hook(move, board)
+            except Exception:
+                pass
+
+    def _pop_move(self, board: chess.Board):
+        board.pop()
+        hook = getattr(self.evaluator, 'on_pop_move', None)
+        if callable(hook):
+            try:
+                hook(board)
+            except Exception:
+                pass
     
     def evaluate_position(self, board: chess.Board) -> float:
         """
         Evaluate a position using the hybrid evaluator.
-        Returns score from current player's perspective.
+        Returns score from WHITE's perspective (positive = good for White).
+        The alpha-beta search handles perspective via is_maximizing flag.
         """
-        # Check for terminal positions
+        # Check for terminal positions (from current player's perspective)
         if board.is_checkmate():
-            return -10000  # Loss for current player
+            # Current player is checkmated - bad for them
+            # If White is checkmated, return negative. If Black is checkmated, return positive.
+            return -10000 if board.turn == chess.WHITE else 10000
         if board.is_stalemate() or board.is_insufficient_material():
             return 0
         if board.is_repetition(3):
@@ -185,16 +220,14 @@ class AlphaBetaSearch:
         with torch.no_grad():
             policy_logits, value, use_transformer = self.evaluator.evaluate(board)
         
-        # Value is from white's perspective, convert to current player's perspective
+        # Value is from WHITE's perspective - keep it that way
         # Handle both tensor and float values
         if isinstance(value, torch.Tensor):
             score = value.item()
         else:
             score = float(value)
         
-        if not board.turn:  # Black to move
-            score = -score
-        
+        # DO NOT negate based on turn - alpha-beta handles that via is_maximizing
         return score
     
     def alpha_beta(self, board: chess.Board, depth: int, alpha: float, 
@@ -230,7 +263,9 @@ class AlphaBetaSearch:
         # Terminal depth or game over
         if depth == 0 or board.is_game_over():
             if self.use_quiescence and depth == 0:
-                score = self.quiescence_search(board, alpha, beta)
+                score = self.quiescence_search(
+                    board, alpha, beta, is_maximizing=is_maximizing
+                )
             else:
                 score = self.evaluate_position(board)
             return score, None
@@ -246,16 +281,18 @@ class AlphaBetaSearch:
             if tt_move in legal_moves:
                 legal_moves.remove(tt_move)
                 legal_moves.insert(0, tt_move)
-        
+    
+        alpha_orig = alpha
+        beta_orig = beta
         legal_moves = self.order_moves(board, legal_moves)
         
         best_move = legal_moves[0]
         best_score = float('-inf') if is_maximizing else float('inf')
         
         for move in legal_moves:
-            board.push(move)
+            self._push_move(board, move)
             score, _ = self.alpha_beta(board, depth - 1, alpha, beta, not is_maximizing)
-            board.pop()
+            self._pop_move(board)
             
             if is_maximizing:
                 if score > best_score:
@@ -273,9 +310,9 @@ class AlphaBetaSearch:
                 break
         
         # Store in transposition table
-        if best_score <= alpha:
+        if best_score <= alpha_orig:
             entry_type = TranspositionTable.UPPER_BOUND
-        elif best_score >= beta:
+        elif best_score >= beta_orig:
             entry_type = TranspositionTable.LOWER_BOUND
         else:
             entry_type = TranspositionTable.EXACT
@@ -322,7 +359,9 @@ class AlphaBetaSearch:
                 break
             depth += 1
             try:
-                score, move = self.alpha_beta(board, depth, float('-inf'), float('inf'), True)
+                # Use correct maximizing flag based on whose turn it is
+                is_maximizing = board.turn == chess.WHITE
+                score, move = self.alpha_beta(board, depth, float('-inf'), float('inf'), is_maximizing)
                 
                 # Check if search was interrupted by time limit
                 if self.time_limit and (time.time() - self.start_time) > self.time_limit:

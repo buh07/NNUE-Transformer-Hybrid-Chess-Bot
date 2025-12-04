@@ -1,0 +1,134 @@
+{
+  "timestamp": "20251204_134324",
+  "bot_config": {
+    "depth": 4,
+    "time_limit": 3.0
+  },
+  "estimated_elo": 1997.591958049831,
+  "confidence_interval": 40.349632907921226,
+  "statistics": {
+    "estimated_elo": 1997.591958049831,
+    "confidence_interval": 40.349632907921226,
+    "total_games": 12,
+    "wins": 8,
+    "draws": 2,
+    "losses": 2,
+    "score": 9.0,
+    "win_rate": 0.75,
+    "variance": 0.12210696568529994,
+    "min_opponent": 1350,
+    "max_opponent": 2100,
+    "avg_opponent": 1725.0
+  },
+  "all_games": [
+    {
+      "game_number": 1,
+      "opponent_elo": 1350,
+      "score": 1.0,
+      "result": "1-0",
+      "moves": 81,
+      "termination": "checkmate",
+      "bot_color": "white"
+    },
+    {
+      "game_number": 2,
+      "opponent_elo": 1350,
+      "score": 1.0,
+      "result": "0-1",
+      "moves": 40,
+      "termination": "checkmate",
+      "bot_color": "black"
+    },
+    {
+      "game_number": 3,
+      "opponent_elo": 1500,
+      "score": 1.0,
+      "result": "1-0",
+      "moves": 73,
+      "termination": "checkmate",
+      "bot_color": "white"
+    },
+    {
+      "game_number": 4,
+      "opponent_elo": 1500,
+      "score": 1.0,
+      "result": "0-1",
+      "moves": 102,
+      "termination": "checkmate",
+      "bot_color": "black"
+    },
+    {
+      "game_number": 5,
+      "opponent_elo": 1650,
+      "score": 0.5,
+      "result": "1/2-1/2",
+      "moves": 150,
+      "termination": "max_moves",
+      "bot_color": "white"
+    },
+    {
+      "game_number": 6,
+      "opponent_elo": 1650,
+      "score": 0.5,
+      "result": "1/2-1/2",
+      "moves": 150,
+      "termination": "max_moves",
+      "bot_color": "black"
+    },
+    {
+      "game_number": 7,
+      "opponent_elo": 1800,
+      "score": 1.0,
+      "result": "1-0",
+      "moves": 51,
+      "termination": "checkmate",
+      "bot_color": "white"
+    },
+    {
+      "game_number": 8,
+      "opponent_elo": 1800,
+      "score": 1.0,
+      "result": "0-1",
+      "moves": 96,
+      "termination": "checkmate",
+      "bot_color": "black"
+    },
+    {
+      "game_number": 9,
+      "opponent_elo": 1950,
+      "score": 0.0,
+      "result": "0-1",
+      "moves": 104,
+      "termination": "checkmate",
+      "bot_color": "white"
+    },
+    {
+      "game_number": 10,
+      "opponent_elo": 1950,
+      "score": 1.0,
+      "result": "0-1",
+      "moves": 78,
+      "termination": "checkmate",
+      "bot_color": "black"
+    },
+    {
+      "game_number": 11,
+      "opponent_elo": 2100,
+      "score": 1.0,
+      "result": "1-0",
+      "moves": 85,
+      "termination": "checkmate",
+      "bot_color": "white"
+    },
+    {
+      "game_number": 12,
+      "opponent_elo": 2100,
+      "score": 0.0,
+      "result": "1-0",
+      "moves": 79,
+      "termination": "checkmate",
+      "bot_color": "black"
+    }
+  ],
+  "test_duration_minutes": 35.92888021866481
+}

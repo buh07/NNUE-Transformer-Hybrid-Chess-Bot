@@ -1,0 +1,7 @@
+nohup: ignoring input
+Traceback (most recent call last):
+  File "/scratch2/f004ndc/NNUE Transformer Hybrid Chess Bot/tests/auto_elo_test.py", line 7, in <module>
+    from test_elo_rating import run_elo_test
+  File "/scratch2/f004ndc/NNUE Transformer Hybrid Chess Bot/tests/test_elo_rating.py", line 12, in <module>
+    from HybridChessBot import HybridChessBot
+ModuleNotFoundError: No module named 'HybridChessBot'

@@ -24,6 +24,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.chess_utils import board_to_tensor, extract_selection_features  # noqa: E402
 import config  # noqa: E402
 
+try:
+    from stockfish_binding import EmbeddedStockfish  # type: ignore
+except Exception:
+    EmbeddedStockfish = None  # type: ignore
+
 
 class StockfishNNUEInterface:
     """
@@ -164,8 +169,36 @@ class NNUEEvaluator(nn.Module):
 
         self.register_buffer("_feature_template", torch.zeros(self.output_dim))
 
+        self._embedded_stockfish = None
+        self._binding_synced = False
+        self._binding_depth = 0
+        self._tracking_board_id = None
+
+        if use_stockfish_engine and EmbeddedStockfish is not None:
+            try:
+                root_dir = getattr(config, "STOCKFISH_DIR", "")
+                if root_dir:
+                    root_dir = os.path.join(root_dir, "src")
+                chess960 = bool(getattr(config, "USE_CHESS960", False))
+                self._embedded_stockfish = EmbeddedStockfish(root_dir, "", "", chess960)
+
+                nnue_path = getattr(config, "STOCKFISH_NNUE_PATH", "")
+                nnue_exists = bool(nnue_path and os.path.exists(nnue_path))
+                if nnue_exists:
+                    self._embedded_stockfish.load_networks(nnue_path)
+                else:
+                    raise FileNotFoundError(f"Stockfish NNUE weights not found: {nnue_path}")
+
+                self.use_stockfish_engine = True
+                print("✓ Using embedded Stockfish NNUE binding")
+            except Exception as exc:
+                self._embedded_stockfish = None
+                print(f"⚠ Failed to initialize Stockfish binding: {exc}")
+
         self._stockfish_interface: Optional[StockfishNNUEInterface] = None
-        if use_stockfish_engine and hasattr(config, "STOCKFISH_BINARY_PATH"):
+        if self._embedded_stockfish is None and use_stockfish_engine and hasattr(
+            config, "STOCKFISH_BINARY_PATH"
+        ):
             binary_path = config.STOCKFISH_BINARY_PATH
             if os.path.exists(binary_path):
                 try:
@@ -207,7 +240,16 @@ class NNUEEvaluator(nn.Module):
         features = self.compute_accumulator(board)
         value = None
 
-        if self.use_stockfish_engine and self._stockfish_interface is not None:
+        if self._binding_available():
+            self._ensure_binding_synced(board)
+            if self._binding_synced:
+                try:
+                    raw_value = float(self._embedded_stockfish.evaluate(0))
+                    value = self._value_to_centipawns(raw_value, board)
+                except Exception as exc:
+                    self._disable_embedding(exc)
+
+        if value is None and self._stockfish_interface is not None and self.use_stockfish_engine:
             try:
                 value = self._stockfish_interface.evaluate_board(board)
             except Exception as exc:
@@ -257,6 +299,115 @@ class NNUEEvaluator(nn.Module):
         features = torch.stack(features_list)
         values = torch.tensor(values_list, dtype=torch.float32)
         return features, values
+
+    # Polynomial parameters copied from Stockfish's win_rate_model helpers
+    _WIN_RATE_AS = (-13.50030198, 40.92780883, -36.82753545, 386.83004070)
+    _MATERIAL_MIN = 17
+    _MATERIAL_MAX = 78
+    _MATERIAL_ANCHOR = 58.0
+
+    def _value_to_centipawns(self, raw_value: float, board: chess.Board) -> float:
+        """
+        Convert Stockfish's internal Value (side-to-move perspective) to centipawns
+        expressed from White's perspective, matching the UCI `eval` output.
+        """
+        oriented_value = raw_value if board.turn == chess.WHITE else -raw_value
+
+        counts = {
+            chess.PAWN: len(board.pieces(chess.PAWN, chess.WHITE)) + len(board.pieces(chess.PAWN, chess.BLACK)),
+            chess.KNIGHT: len(board.pieces(chess.KNIGHT, chess.WHITE)) + len(board.pieces(chess.KNIGHT, chess.BLACK)),
+            chess.BISHOP: len(board.pieces(chess.BISHOP, chess.WHITE)) + len(board.pieces(chess.BISHOP, chess.BLACK)),
+            chess.ROOK: len(board.pieces(chess.ROOK, chess.WHITE)) + len(board.pieces(chess.ROOK, chess.BLACK)),
+            chess.QUEEN: len(board.pieces(chess.QUEEN, chess.WHITE)) + len(board.pieces(chess.QUEEN, chess.BLACK)),
+        }
+        material = (
+            counts[chess.PAWN]
+            + 3 * counts[chess.KNIGHT]
+            + 3 * counts[chess.BISHOP]
+            + 5 * counts[chess.ROOK]
+            + 9 * counts[chess.QUEEN]
+        )
+
+        clamped = max(self._MATERIAL_MIN, min(self._MATERIAL_MAX, material)) / self._MATERIAL_ANCHOR
+        a = (
+            ((self._WIN_RATE_AS[0] * clamped + self._WIN_RATE_AS[1]) * clamped + self._WIN_RATE_AS[2]) * clamped
+            + self._WIN_RATE_AS[3]
+        )
+
+        if a == 0:
+            return float(oriented_value)
+
+        return float((100.0 * oriented_value) / a)
+
+    # ------------------------------------------------------------------
+    # Embedded Stockfish helpers
+    def _binding_available(self) -> bool:
+        return self._embedded_stockfish is not None
+
+    def _disable_embedding(self, exc: Exception):
+        if not self._warned_fallback:
+            print(f"⚠ Embedded Stockfish disabled: {exc}")
+            self._warned_fallback = True
+        self._embedded_stockfish = None
+        self._binding_synced = False
+        self._binding_depth = 0
+        self._tracking_board_id = None
+
+    def _ensure_binding_synced(self, board: chess.Board):
+        if not self._binding_available():
+            return
+
+        board_id = id(board)
+        if not self._binding_synced or self._tracking_board_id != board_id:
+            self.sync_embedded_position(board)
+            return
+
+        if len(board.move_stack) != self._binding_depth:
+            self.sync_embedded_position(board)
+
+    def sync_embedded_position(self, board: chess.Board):
+        if not self._binding_available():
+            return
+
+        try:
+            self._embedded_stockfish.set_fen(board.fen(), getattr(board, "chess960", False))
+            self._binding_synced = True
+            self._binding_depth = len(board.move_stack)
+            self._tracking_board_id = id(board)
+        except Exception as exc:
+            self._disable_embedding(exc)
+
+    def embedded_push_move(self, move: chess.Move, board: chess.Board):
+        if not self._binding_available():
+            return
+
+        if not self._binding_synced or self._tracking_board_id != id(board):
+            self.sync_embedded_position(board)
+            if not self._binding_synced or self._tracking_board_id != id(board):
+                return
+
+        try:
+            self._embedded_stockfish.push_uci_move(move.uci())
+            self._binding_depth += 1
+        except Exception as exc:
+            self._disable_embedding(exc)
+
+    def embedded_pop_move(self, board: chess.Board):
+        if not self._binding_available() or not self._binding_synced:
+            return
+
+        if self._tracking_board_id != id(board):
+            self.sync_embedded_position(board)
+            return
+
+        if self._binding_depth <= 0:
+            return
+
+        try:
+            self._embedded_stockfish.pop_move()
+            self._binding_depth -= 1
+        except Exception as exc:
+            self._disable_embedding(exc)
 
     def __del__(self):
         if self._stockfish_interface is not None:

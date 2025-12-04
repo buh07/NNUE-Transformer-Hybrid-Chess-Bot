@@ -213,6 +213,55 @@ def test_time_limit():
     print("✓ Time limit tests passed!\n")
 
 
+def test_quiescence_preserves_white_perspective():
+    """Ensure quiescence search keeps scores white-centric even for Black to move."""
+    print("Testing Quiescence Perspective Preservation...")
+
+    board = chess.Board()
+    board.clear()
+    board.set_piece_at(chess.E8, chess.Piece(chess.KING, chess.BLACK))
+    board.set_piece_at(chess.H1, chess.Piece(chess.KING, chess.WHITE))
+    board.set_piece_at(chess.B4, chess.Piece(chess.QUEEN, chess.BLACK))
+    board.set_piece_at(chess.B2, chess.Piece(chess.PAWN, chess.WHITE))
+    board.turn = chess.BLACK
+
+    evaluator = DummyEvaluator()
+    search = AlphaBetaSearch(evaluator, max_depth=1, use_quiescence=True)
+
+    score, _ = search.alpha_beta(
+        board,
+        depth=1,
+        alpha=float('-inf'),
+        beta=float('inf'),
+        is_maximizing=False
+    )
+
+    assert score < 0, "Black capture sequence should remain negative for White"
+
+
+def test_tt_exact_entry_recorded():
+    """Ensure TT entries store EXACT when score is within original window."""
+    print("Testing TT entry classification...")
+
+    board = chess.Board()
+    evaluator = DummyEvaluator()
+    search = AlphaBetaSearch(evaluator, max_depth=1, use_quiescence=False)
+
+    search.alpha_beta(
+        board,
+        depth=1,
+        alpha=float('-inf'),
+        beta=float('inf'),
+        is_maximizing=True
+    )
+
+    zobrist = board._transposition_key()
+    entry = search.tt.table.get(zobrist)
+    assert entry is not None, "Expected TT entry for root position"
+    _, _, entry_type, _ = entry
+    assert entry_type == TranspositionTable.EXACT, "Root node should be stored as EXACT"
+
+
 def main():
     print("=" * 60)
     print("Alpha-Beta Search Test Suite")
@@ -226,6 +275,8 @@ def main():
         test_iterative_deepening()
         test_checkmate_detection()
         test_time_limit()
+        test_quiescence_preserves_white_perspective()
+        test_tt_exact_entry_recorded()
         
         print("=" * 60)
         print("✓ ALL TESTS PASSED!")

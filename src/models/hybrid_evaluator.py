@@ -86,6 +86,31 @@ class HybridEvaluator:
         # Internal flag to mark whether we've seen the first transformer forward
         self._seen_first_transformer_call = False
 
+    # Hooks to keep embedded Stockfish (if available) synchronized
+    def prepare_search(self, board: chess.Board):
+        sync_fn = getattr(self.nnue, 'sync_embedded_position', None)
+        if callable(sync_fn):
+            try:
+                sync_fn(board)
+            except Exception:
+                pass
+
+    def on_push_move(self, move: chess.Move, board: chess.Board):
+        push_fn = getattr(self.nnue, 'embedded_push_move', None)
+        if callable(push_fn):
+            try:
+                push_fn(move, board)
+            except Exception:
+                pass
+
+    def on_pop_move(self, board: chess.Board):
+        pop_fn = getattr(self.nnue, 'embedded_pop_move', None)
+        if callable(pop_fn):
+            try:
+                pop_fn(board)
+            except Exception:
+                pass
+
     def _init_stats(self) -> Dict:
         """Initialize evaluation statistics dictionary."""
         return {
@@ -490,9 +515,11 @@ class HybridEvaluator:
                         self._compat_warn_shown = True
                     return value / float(self.compatibility_scale)
 
-                if max_abs > 10.0:
+                # Only rescale if value is VERY large (>1000 cp), indicating transformer scale mismatch
+                # Normal NNUE values are in centipawns (~0-100 range)
+                if max_abs > 1000.0:
                     if not self._compat_warn_shown:
-                        print("[WARNING] Detected large evaluator outputs (|value| > 10). Assuming legacy 100x scaling. Rescaling outputs by /100 for inference.")
+                        print("[WARNING] Detected very large evaluator outputs (|value| > 1000). Assuming legacy 100x scaling. Rescaling outputs by /100 for inference.")
                         self._compat_warn_shown = True
                     return value / 100.0
 
@@ -507,9 +534,11 @@ class HybridEvaluator:
                         self._compat_warn_shown = True
                     return value / float(self.compatibility_scale)
 
-                if abs_val > 10.0:
+                # Only rescale if value is VERY large (>1000 cp), indicating transformer scale mismatch  
+                # Normal NNUE values are in centipawns (~0-100 range)
+                if abs_val > 1000.0:
                     if not self._compat_warn_shown:
-                        print("[WARNING] Detected large evaluator outputs (|value| > 10). Assuming legacy 100x scaling. Rescaling outputs by /100 for inference.")
+                        print("[WARNING] Detected very large evaluator outputs (|value| > 1000). Assuming legacy 100x scaling. Rescaling outputs by /100 for inference.")
                         self._compat_warn_shown = True
                     return value / 100.0
 
