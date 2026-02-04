@@ -14,7 +14,7 @@ except Exception:
     autocast = nullcontext
 import chess
 import time
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 import sys
 import os
 
@@ -119,6 +119,9 @@ class HybridEvaluator:
             'total_time_nnue': 0.0,
             'total_time_hybrid': 0.0,
             'total_evals': 0,
+            'nnue_forward_calls': 0,
+            'total_time_nnue_forward': 0.0,
+            'nnue_backend_usage': {},
             # Cache instrumentation
             'cache_hits': 0,
             'cache_misses': 0,
@@ -205,9 +208,13 @@ class HybridEvaluator:
         
         # Step 1: Always get NNUE features and value
         # Use inference_mode for fastest no-grad execution
+        nnue_t0 = time.perf_counter()
         with torch.inference_mode():
             nnue_features, nnue_value = self.nnue.forward(board)
-            nnue_features = nnue_features.to(self.device)
+        nnue_elapsed = time.perf_counter() - nnue_t0
+        backend = getattr(self.nnue, "last_backend", "unknown")
+        self._record_nnue_timing(backend, nnue_elapsed)
+        nnue_features = nnue_features.to(self.device)
         
         # Step 2: Decide if transformer is needed
         selection_features = extract_selection_features(board, depth_remaining)
@@ -329,7 +336,11 @@ class HybridEvaluator:
             nnue_features_list = []
             nnue_values_list = []
             for board in boards:
+                nnue_t0 = time.perf_counter()
                 feat, val = self.nnue.forward(board)
+                nnue_elapsed = time.perf_counter() - nnue_t0
+                backend = getattr(self.nnue, "last_backend", "unknown")
+                self._record_nnue_timing(backend, nnue_elapsed)
                 nnue_features_list.append(feat)
                 nnue_values_list.append(val)
             
@@ -432,6 +443,16 @@ class HybridEvaluator:
         print(f"  NNUE only: {avg_time_nnue:.2f} ms")
         print(f"  Hybrid: {avg_time_hybrid:.2f} ms")
         print(f"  Overall: {(self.stats['total_time_nnue'] + self.stats['total_time_hybrid']) / total * 1000:.2f} ms")
+        if self.stats.get('nnue_forward_calls', 0) > 0:
+            avg_nnue_forward = (self.stats['total_time_nnue_forward'] / self.stats['nnue_forward_calls']) * 1000
+            print(f"\nNNUE backend timings:")
+            print(f"  Calls: {self.stats['nnue_forward_calls']:,}")
+            print(f"  Avg NNUE forward: {avg_nnue_forward:.2f} ms")
+            backend_usage = self.stats.get('nnue_backend_usage', {})
+            if backend_usage:
+                for backend, data in backend_usage.items():
+                    avg_backend = (data['time'] / data['calls']) * 1000 if data['calls'] > 0 else 0.0
+                    print(f"    - {backend}: {data['calls']:,} calls, {data['time']:.3f}s total ({avg_backend:.2f} ms avg)")
         # Cache stats
         print(f"\nCache statistics:")
         print(f"  Hits: {self.stats.get('cache_hits', 0):,}")
@@ -454,6 +475,23 @@ class HybridEvaluator:
     def get_stats(self) -> Dict:
         """Return a shallow copy of the current stats dictionary."""
         return dict(self.stats)
+
+    def get_ordered_moves(self, board: chess.Board):
+        helper = getattr(self.nnue, "get_ordered_moves", None)
+        if callable(helper):
+            return helper(board)
+        return None
+
+    def tt_probe(self, board: chess.Board):
+        helper = getattr(self.nnue, "tt_probe_binding", None)
+        if callable(helper):
+            return helper(board)
+        return None
+
+    def tt_store(self, board: chess.Board, score: float, depth: int, flag: int, move: Optional[chess.Move]):
+        helper = getattr(self.nnue, "tt_store_binding", None)
+        if callable(helper):
+            helper(board, score, depth, flag, move)
 
     def _heuristic_policy(self, board: chess.Board, legal_mask: torch.Tensor) -> torch.Tensor:
         """
@@ -502,50 +540,54 @@ class HybridEvaluator:
         rescale by 100.
         """
         try:
-            # Tensor branch
+            scale = float(self.compatibility_scale) if (self.compatibility_scale and self.compatibility_scale > 1.0) else None
+
+            def _maybe_warn():
+                if not self._compat_warn_shown:
+                    if scale:
+                        print(f"[WARNING] Applying compatibility rescale by {scale} to evaluator outputs.")
+                    else:
+                        print("[WARNING] Rescaling evaluator output by 100 to match centipawn targets.")
+                    self._compat_warn_shown = True
+
             if isinstance(value, torch.Tensor):
-                # compute max absolute magnitude
                 if value.numel() == 0:
                     return value
                 max_abs = float(value.abs().max().detach().cpu().item())
-
-                if self.compatibility_scale and self.compatibility_scale > 1.0:
-                    if not self._compat_warn_shown:
-                        print(f"[WARNING] Applying compatibility rescale by {self.compatibility_scale} to evaluator outputs.")
-                        self._compat_warn_shown = True
-                    return value / float(self.compatibility_scale)
-
-                # Only rescale if value is VERY large (>1000 cp), indicating transformer scale mismatch
-                # Normal NNUE values are in centipawns (~0-100 range)
+                if scale:
+                    _maybe_warn()
+                    return value / scale
                 if max_abs > 1000.0:
-                    if not self._compat_warn_shown:
-                        print("[WARNING] Detected very large evaluator outputs (|value| > 1000). Assuming legacy 100x scaling. Rescaling outputs by /100 for inference.")
-                        self._compat_warn_shown = True
-                    return value / 100.0
-
+                    scale = 100.0
+                    _maybe_warn()
+                    return value / scale
                 return value
-
-            # Numeric branch
             else:
-                abs_val = abs(value)
-                if self.compatibility_scale and self.compatibility_scale > 1.0:
-                    if not self._compat_warn_shown:
-                        print(f"[WARNING] Applying compatibility rescale by {self.compatibility_scale} to evaluator outputs.")
-                        self._compat_warn_shown = True
-                    return value / float(self.compatibility_scale)
-
-                # Only rescale if value is VERY large (>1000 cp), indicating transformer scale mismatch  
-                # Normal NNUE values are in centipawns (~0-100 range)
-                if abs_val > 1000.0:
-                    if not self._compat_warn_shown:
-                        print("[WARNING] Detected very large evaluator outputs (|value| > 1000). Assuming legacy 100x scaling. Rescaling outputs by /100 for inference.")
-                        self._compat_warn_shown = True
-                    return value / 100.0
-
+                max_abs = abs(float(value))
+                if scale:
+                    _maybe_warn()
+                    return float(value) / scale
+                if max_abs > 1000.0:
+                    scale = 100.0
+                    _maybe_warn()
+                    return float(value) / scale
                 return value
         except Exception:
-            # Fall back to returning original value on any unexpected error
             return value
+        return value
+
+    def _record_nnue_timing(self, backend: str, elapsed: float):
+        """
+        Track NNUE evaluation latency and backend usage so profiling runs can
+        pinpoint whether the pybind path, embedded binding, or subprocess
+        path dominates search time.
+        """
+        self.stats['nnue_forward_calls'] += 1
+        self.stats['total_time_nnue_forward'] += elapsed
+        backend_usage = self.stats.setdefault('nnue_backend_usage', {})
+        entry = backend_usage.setdefault(backend, {'calls': 0, 'time': 0.0})
+        entry['calls'] += 1
+        entry['time'] += elapsed
     
     def save(self, path: str):
         """Save trainable components"""

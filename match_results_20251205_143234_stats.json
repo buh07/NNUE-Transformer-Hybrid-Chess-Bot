@@ -1,0 +1,33 @@
+{
+  "search": {
+    "nodes_searched": 12762,
+    "quiescence_nodes": 10119,
+    "time_elapsed": 10.038200855255127,
+    "nps": 1271.343359633906,
+    "tt_size": 282805,
+    "tt_hits": 458084,
+    "tt_misses": 1697780,
+    "tt_hit_rate": 0.21248279112226004
+  },
+  "evaluation": {
+    "nnue_only_evals": 1769381,
+    "hybrid_evals": 188708,
+    "total_time_nnue": 2300.6091039180756,
+    "total_time_hybrid": 495.3996512889862,
+    "total_evals": 1958089,
+    "cache_hits": 0,
+    "cache_misses": 1958089,
+    "transformer_calls": 188708,
+    "total_time_transformer": 326.38751769065857,
+    "transformer_first_call_time": 0.08270788192749023,
+    "evaluation_mode": "auto"
+  },
+  "config": {
+    "max_depth": null,
+    "time_based_search": true,
+    "time_limit": 10.0,
+    "device": "cuda",
+    "use_time_management": false,
+    "evaluation_mode": "auto"
+  }
+}

@@ -25,6 +25,15 @@ The files in `misc/` are not required for runtime; everything else is used direc
 
 * Python 3.10+.
 * `python-chess`, PyTorch 2.x, and the other packages listed in `requirements.txt`.
+* To use the new embedded Stockfish binding, ensure `pybind11` is installed and run:
+  ```bash
+  HYBRID_STOCKFISH_ARCH=x86-64-avx2 \
+  HYBRID_STOCKFISH_JOBS=32 \
+  bindings/pybind11/build_binding.sh
+  export PYTHONPATH="$(pwd)/bindings/pybind11:${PYTHONPATH}"
+  ```
+  (`HYBRID_STOCKFISH_ARCH`/`HYBRID_STOCKFISH_JOBS` default to `x86-64` and `nproc`; override them for CI or cross-compiles.)
+* The legacy embedded binding (`stockfish_binding.cpython-*.so`) is disabled by default. To opt in (for regression testing only) set `HYBRID_ENABLE_LEGACY_BINDING=1` before launching the bot.
 * Stockfish binary (already included under `Stockfish/src/stockfish`) with the NNUE nets referenced by `config.py`.
 * Transformer weights (`chess-transformers/checkpoints/CT-EFT-85/CT-EFT-85.pt`).
 
@@ -76,7 +85,8 @@ The bot exposes `choose_move(board)` and has optional helper methods (`analyze_p
 
 ```bash
 source chess_env/bin/activate
-python play_vs_stockfish.py --time 1.0 --depth 4 --color white
+export PYTHONPATH="$(pwd)/bindings/pybind11:${PYTHONPATH}"
+python play_vs_stockfish.py --time 1.0 --depth 4 --color white --engine-backend pybind
 ```
 
 This script spins up the hybrid evaluator and plays against Stockfish (or human input) via the console.

@@ -8,10 +8,17 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
 CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, 'checkpoints')
-STOCKFISH_DIR = os.path.join(PROJECT_ROOT, 'Stockfish')
+STOCKFISH_PRISTINE_DIR = os.path.join(PROJECT_ROOT, 'Stockfish')
+STOCKFISH_HYBRID_DIR = os.path.join(PROJECT_ROOT, 'Stockfish_hybrid')
+STOCKFISH_DIR = os.environ.get(
+    'HYBRID_STOCKFISH_DIR',
+    STOCKFISH_HYBRID_DIR if os.path.isdir(STOCKFISH_HYBRID_DIR) else STOCKFISH_PRISTINE_DIR
+)
 CHESS_TRANSFORMERS_DIR = os.path.join(PROJECT_ROOT, 'chess-transformers')
 
 # Model Paths  
+STOCKFISH_ARCH = os.environ.get('HYBRID_STOCKFISH_ARCH', 'x86-64')
+STOCKFISH_JOBS = int(os.environ.get('HYBRID_STOCKFISH_JOBS', '4'))
 STOCKFISH_BINARY_PATH = os.path.join(STOCKFISH_DIR, 'src', 'stockfish')  # Compiled Stockfish binary
 STOCKFISH_NNUE_PATH = os.path.join(STOCKFISH_DIR, 'src', 'nn-49c1193b131c.nnue')  # Latest big network (110MB, best)
 TRANSFORMER_WEIGHTS_PATH = os.path.join(CHESS_TRANSFORMERS_DIR, 'checkpoints', 'CT-EFT-85', 'CT-EFT-85.pt')  # CT-EFT-85 (~19M params, 73MB, best available)

@@ -6,7 +6,7 @@ Uses the hybrid evaluator for position evaluation.
 import chess
 import torch
 import time
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, Any
 from collections import OrderedDict
 
 
@@ -26,18 +26,23 @@ class TranspositionTable:
         self.table = OrderedDict()
         self.hits = 0
         self.misses = 0
+        self.lookup_time = 0.0
+        self.store_time = 0.0
     
     def get(self, zobrist_hash: int) -> Optional[Tuple[float, int, int, chess.Move]]:
         """
         Returns (score, depth, entry_type, best_move) if found, else None.
         """
+        start = time.perf_counter()
         if zobrist_hash in self.table:
             self.hits += 1
             # Move to end (most recently used)
             entry = self.table.pop(zobrist_hash)
             self.table[zobrist_hash] = entry
+            self.lookup_time += time.perf_counter() - start
             return entry
         self.misses += 1
+        self.lookup_time += time.perf_counter() - start
         return None
     
     def store(self, zobrist_hash: int, score: float, depth: int, 
@@ -45,17 +50,21 @@ class TranspositionTable:
         """
         Store evaluation in transposition table.
         """
+        start = time.perf_counter()
         # If table is full, remove oldest entry (LRU)
         if len(self.table) >= self.max_size:
             self.table.popitem(last=False)
         
         self.table[zobrist_hash] = (score, depth, entry_type, best_move)
+        self.store_time += time.perf_counter() - start
     
     def clear(self):
         """Clear the transposition table."""
         self.table.clear()
         self.hits = 0
         self.misses = 0
+        self.lookup_time = 0.0
+        self.store_time = 0.0
     
     def get_stats(self) -> Dict:
         """Return statistics about table usage."""
@@ -65,7 +74,9 @@ class TranspositionTable:
             'size': len(self.table),
             'hits': self.hits,
             'misses': self.misses,
-            'hit_rate': hit_rate
+            'hit_rate': hit_rate,
+            'lookup_time': self.lookup_time,
+            'store_time': self.store_time,
         }
 
 
@@ -99,12 +110,32 @@ class AlphaBetaSearch:
         self.quiescence_nodes = 0
         self.start_time = 0
         self.time_limit = None
+        self.depth_stats: Dict[int, Dict[str, Any]] = {}
     
     def order_moves(self, board: chess.Board, moves: list) -> list:
         """
         Order moves for better alpha-beta pruning.
         Priority: Captures > Checks > Other moves
         """
+        ordered_from_binding = None
+        binding_helper = getattr(self.evaluator, 'get_ordered_moves', None)
+        if callable(binding_helper):
+            try:
+                ordered_from_binding = binding_helper(board)
+            except Exception:
+                ordered_from_binding = None
+
+        if ordered_from_binding:
+            move_map = {move.uci(): move for move in moves}
+            ordered_moves = []
+            for uci in ordered_from_binding:
+                move = move_map.pop(uci, None)
+                if move is not None:
+                    ordered_moves.append(move)
+            # Append any remaining moves not returned by the binding helper
+            ordered_moves.extend(move_map.values())
+            return ordered_moves
+
         scored_moves = []
         for move in moves:
             score = 0
@@ -134,7 +165,8 @@ class AlphaBetaSearch:
         return [move for _, move in scored_moves]
     
     def quiescence_search(self, board: chess.Board, alpha: float, beta: float, 
-                          max_depth: int = 4, is_maximizing: bool = True) -> float:
+                          max_depth: int = 4, is_maximizing: bool = True,
+                          ply: int = 0) -> float:
         """
         Quiescence search to avoid horizon effect.
         Only searches capture moves to reach a "quiet" position.
@@ -143,6 +175,8 @@ class AlphaBetaSearch:
             return self.evaluate_position(board)
         
         self.quiescence_nodes += 1
+        depth_stats = self._get_depth_stats(ply)
+        depth_stats['quiescence_nodes'] += 1
         
         # Stand-pat evaluation (always from White's POV)
         stand_pat = self.evaluate_position(board)
@@ -165,7 +199,7 @@ class AlphaBetaSearch:
         for move in captures:
             self._push_move(board, move)
             score = self.quiescence_search(
-                board, alpha, beta, max_depth - 1, not is_maximizing
+                board, alpha, beta, max_depth - 1, not is_maximizing, ply + 1
             )
             self._pop_move(board)
             
@@ -230,8 +264,8 @@ class AlphaBetaSearch:
         # DO NOT negate based on turn - alpha-beta handles that via is_maximizing
         return score
     
-    def alpha_beta(self, board: chess.Board, depth: int, alpha: float, 
-                   beta: float, is_maximizing: bool) -> Tuple[float, Optional[chess.Move]]:
+    def alpha_beta(self, board: chess.Board, depth: int, alpha: float,
+                   beta: float, is_maximizing: bool, ply: int = 0) -> Tuple[float, Optional[chess.Move]]:
         """
         Alpha-beta search with transposition table.
         
@@ -239,18 +273,52 @@ class AlphaBetaSearch:
             (score, best_move) tuple
         """
         self.nodes_searched += 1
+        depth_stats = self._get_depth_stats(ply)
+        depth_stats['nodes'] += 1
         
         # Check time limit
         if self.time_limit and (time.time() - self.start_time) > self.time_limit:
             return self.evaluate_position(board), None
         
-        # Check transposition table
+        binding_entry = None
+        binding_probe = getattr(self.evaluator, 'tt_probe', None)
+        if callable(binding_probe):
+            try:
+                binding_entry = binding_probe(board)
+            except Exception:
+                binding_entry = None
+
         zobrist = board._transposition_key()
         tt_entry = self.tt.get(zobrist)
+        if binding_entry:
+            depth_stats['tt_hits'] += 1
+            stored_depth = binding_entry.get('depth', -1)
+            if stored_depth >= depth:
+                tt_score = float(binding_entry.get('score', 0.0))
+                tt_type = binding_entry.get('flag', TranspositionTable.EXACT)
+                tt_move = None
+                move_str = binding_entry.get('move')
+                if move_str:
+                    try:
+                        tt_move = chess.Move.from_uci(move_str)
+                    except ValueError:
+                        tt_move = None
+                if tt_type == TranspositionTable.EXACT:
+                    return tt_score, tt_move
+                elif tt_type == TranspositionTable.LOWER_BOUND:
+                    alpha = max(alpha, tt_score)
+                elif tt_type == TranspositionTable.UPPER_BOUND:
+                    beta = min(beta, tt_score)
+                if alpha >= beta:
+                    depth_stats['tt_prunes'] += 1
+                    return tt_score, tt_move
+
         if tt_entry is not None:
+            depth_stats['tt_hits'] += 1
             tt_score, tt_depth, tt_type, tt_move = tt_entry
             if tt_depth >= depth:
                 if tt_type == TranspositionTable.EXACT:
+                    depth_stats['useful_tt_hits'] += 1
                     return tt_score, tt_move
                 elif tt_type == TranspositionTable.LOWER_BOUND:
                     alpha = max(alpha, tt_score)
@@ -258,14 +326,19 @@ class AlphaBetaSearch:
                     beta = min(beta, tt_score)
                 
                 if alpha >= beta:
+                    depth_stats['tt_prunes'] += 1
                     return tt_score, tt_move
+        else:
+            depth_stats['tt_misses'] += 1
         
         # Terminal depth or game over
         if depth == 0 or board.is_game_over():
+            depth_stats['terminal_nodes'] += 1
             if self.use_quiescence and depth == 0:
                 score = self.quiescence_search(
-                    board, alpha, beta, is_maximizing=is_maximizing
+                    board, alpha, beta, is_maximizing=is_maximizing, ply=ply
                 )
+                depth_stats['quiescence_calls'] += 1
             else:
                 score = self.evaluate_position(board)
             return score, None
@@ -274,6 +347,7 @@ class AlphaBetaSearch:
         legal_moves = list(board.legal_moves)
         if not legal_moves:
             return self.evaluate_position(board), None
+        depth_stats['legal_moves_generated'] += len(legal_moves)
         
         # Use transposition table move for move ordering
         if tt_entry and tt_entry[3]:
@@ -291,7 +365,8 @@ class AlphaBetaSearch:
         
         for move in legal_moves:
             self._push_move(board, move)
-            score, _ = self.alpha_beta(board, depth - 1, alpha, beta, not is_maximizing)
+            depth_stats['moves_explored'] += 1
+            score, _ = self.alpha_beta(board, depth - 1, alpha, beta, not is_maximizing, ply + 1)
             self._pop_move(board)
             
             if is_maximizing:
@@ -307,6 +382,10 @@ class AlphaBetaSearch:
             
             # Alpha-beta pruning
             if beta <= alpha:
+                if is_maximizing:
+                    depth_stats['beta_cutoffs'] += 1
+                else:
+                    depth_stats['alpha_cutoffs'] += 1
                 break
         
         # Store in transposition table
@@ -318,7 +397,13 @@ class AlphaBetaSearch:
             entry_type = TranspositionTable.EXACT
         
         self.tt.store(zobrist, best_score, depth, entry_type, best_move)
-        
+        binding_store = getattr(self.evaluator, 'tt_store', None)
+        if callable(binding_store):
+            try:
+                binding_store(board, best_score, depth, entry_type, best_move)
+            except Exception:
+                pass
+
         return best_score, best_move
     
     def search_iterative_deepening(self, board: chess.Board, max_depth: Optional[int] = None,
@@ -347,6 +432,15 @@ class AlphaBetaSearch:
         self.time_limit = time_limit
         self.nodes_searched = 0
         self.quiescence_nodes = 0
+        self._reset_depth_profiles()
+
+        # Ensure embedded evaluators (if any) are synchronised with the root board
+        prepare_fn = getattr(self.evaluator, 'prepare_search', None)
+        if callable(prepare_fn):
+            try:
+                prepare_fn(board)
+            except Exception:
+                pass
         
         best_move = None
         best_score = float('-inf')
@@ -361,7 +455,7 @@ class AlphaBetaSearch:
             try:
                 # Use correct maximizing flag based on whose turn it is
                 is_maximizing = board.turn == chess.WHITE
-                score, move = self.alpha_beta(board, depth, float('-inf'), float('inf'), is_maximizing)
+                score, move = self.alpha_beta(board, depth, float('-inf'), float('inf'), is_maximizing, ply=0)
                 
                 # Check if search was interrupted by time limit
                 if self.time_limit and (time.time() - self.start_time) > self.time_limit:
@@ -394,7 +488,10 @@ class AlphaBetaSearch:
             'time': elapsed,
             'nps': self.nodes_searched / elapsed if elapsed > 0 else 0,
             'tt_size': tt_stats['size'],
-            'tt_hit_rate': tt_stats['hit_rate']
+            'tt_hit_rate': tt_stats['hit_rate'],
+            'tt_lookup_time': tt_stats['lookup_time'],
+            'tt_store_time': tt_stats['store_time'],
+            'depth_profile': self._summarize_depth_stats(),
         }
         
         return best_move, best_score, stats
@@ -454,7 +551,8 @@ class AlphaBetaSearch:
             'tt_size': tt_stats['size'],
             'tt_hits': tt_stats['hits'],
             'tt_misses': tt_stats['misses'],
-            'tt_hit_rate': tt_stats['hit_rate']
+            'tt_hit_rate': tt_stats['hit_rate'],
+            'depth_profile': self._summarize_depth_stats(),
         }
     
     def reset_statistics(self):
@@ -463,3 +561,40 @@ class AlphaBetaSearch:
         self.quiescence_nodes = 0
         self.start_time = 0
         self.tt.clear()
+        self.depth_stats = {}
+
+    def _reset_depth_profiles(self):
+        self.depth_stats = {}
+
+    def _get_depth_stats(self, ply: int) -> Dict[str, Any]:
+        if ply not in self.depth_stats:
+            self.depth_stats[ply] = {
+                'nodes': 0,
+                'terminal_nodes': 0,
+                'tt_hits': 0,
+                'tt_misses': 0,
+                'useful_tt_hits': 0,
+                'tt_prunes': 0,
+                'legal_moves_generated': 0,
+                'moves_explored': 0,
+                'beta_cutoffs': 0,
+                'alpha_cutoffs': 0,
+                'quiescence_calls': 0,
+                'quiescence_nodes': 0,
+            }
+        return self.depth_stats[ply]
+
+    def _summarize_depth_stats(self) -> Dict[int, Dict[str, float]]:
+        if not self.depth_stats:
+            return {}
+        summary: Dict[int, Dict[str, float]] = {}
+        for ply, stats in sorted(self.depth_stats.items()):
+            nodes = max(stats.get('nodes', 0), 1)
+            tt_total = stats.get('tt_hits', 0) + stats.get('tt_misses', 0)
+            branching = stats.get('moves_explored', 0) / nodes
+            summary[ply] = {
+                **stats,
+                'branching_factor': branching,
+                'tt_hit_rate': (stats.get('tt_hits', 0) / tt_total) if tt_total > 0 else 0.0,
+            }
+        return summary

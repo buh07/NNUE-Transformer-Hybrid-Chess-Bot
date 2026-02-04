@@ -9,6 +9,7 @@ the same numeric targets as inference.
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import subprocess
@@ -24,10 +25,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.chess_utils import board_to_tensor, extract_selection_features  # noqa: E402
 import config  # noqa: E402
 
+ENABLE_LEGACY_BINDING = os.environ.get("HYBRID_ENABLE_LEGACY_BINDING", "0").lower() in {"1", "true", "yes"}
+EmbeddedStockfish = None
+StockfishHybridEngine = None
+
+if ENABLE_LEGACY_BINDING:
+    try:
+        from stockfish_binding import EmbeddedStockfish  # type: ignore
+    except Exception:
+        EmbeddedStockfish = None  # type: ignore
+
 try:
-    from stockfish_binding import EmbeddedStockfish  # type: ignore
+    StockfishHybridEngine = importlib.import_module(
+        "stockfish_hybrid_binding"
+    ).StockfishHybridEngine
 except Exception:
-    EmbeddedStockfish = None  # type: ignore
+    StockfishHybridEngine = None
 
 
 class StockfishNNUEInterface:
@@ -160,55 +173,93 @@ class NNUEEvaluator(nn.Module):
     to obtain fast, search-free NNUE values.
     """
 
-    def __init__(self, nnue_weights_path: str = None, use_stockfish_engine: bool = True):
+    def __init__(self, nnue_weights_path: str = None, use_stockfish_engine: bool = True, preferred_backend: Optional[str] = None):
         super().__init__()
 
         self.output_dim = config.NNUE_FEATURE_DIM
         self.use_stockfish_engine = False
         self._warned_fallback = False
+        backend_pref_env = os.environ.get("HYBRID_ENGINE_BACKEND")
+        normalized_pref = (preferred_backend or backend_pref_env or "").lower()
+        self._backend_preference = normalized_pref if normalized_pref in {"pybind", "embedded", "subprocess"} else None
 
         self.register_buffer("_feature_template", torch.zeros(self.output_dim))
 
         self._embedded_stockfish = None
+        self._hybrid_binding = None
         self._binding_synced = False
         self._binding_depth = 0
         self._tracking_board_id = None
-
-        if use_stockfish_engine and EmbeddedStockfish is not None:
-            try:
-                root_dir = getattr(config, "STOCKFISH_DIR", "")
-                if root_dir:
-                    root_dir = os.path.join(root_dir, "src")
-                chess960 = bool(getattr(config, "USE_CHESS960", False))
-                self._embedded_stockfish = EmbeddedStockfish(root_dir, "", "", chess960)
-
-                nnue_path = getattr(config, "STOCKFISH_NNUE_PATH", "")
-                nnue_exists = bool(nnue_path and os.path.exists(nnue_path))
-                if nnue_exists:
-                    self._embedded_stockfish.load_networks(nnue_path)
-                else:
-                    raise FileNotFoundError(f"Stockfish NNUE weights not found: {nnue_path}")
-
-                self.use_stockfish_engine = True
-                print("✓ Using embedded Stockfish NNUE binding")
-            except Exception as exc:
-                self._embedded_stockfish = None
-                print(f"⚠ Failed to initialize Stockfish binding: {exc}")
+        self._last_backend = "uninitialized"
 
         self._stockfish_interface: Optional[StockfishNNUEInterface] = None
-        if self._embedded_stockfish is None and use_stockfish_engine and hasattr(
-            config, "STOCKFISH_BINARY_PATH"
-        ):
-            binary_path = config.STOCKFISH_BINARY_PATH
-            if os.path.exists(binary_path):
-                try:
-                    self._stockfish_interface = StockfishNNUEInterface(binary_path)
-                    self.use_stockfish_engine = True
-                    print(f"✓ Using Stockfish NNUE evals from: {binary_path}")
-                except Exception as exc:
-                    print(f"⚠ Failed to initialize Stockfish NNUE interface: {exc}")
-            else:
-                print(f"⚠ Stockfish binary not found at {binary_path}")
+
+        if use_stockfish_engine:
+            order = ["pybind", "embedded", "subprocess"]
+            if self._backend_preference:
+                order = [self._backend_preference] + [b for b in order if b != self._backend_preference]
+
+            for backend_choice in order:
+                if backend_choice == "pybind":
+                    if StockfishHybridEngine is None or self._hybrid_binding is not None:
+                        continue
+                    try:
+                        self._hybrid_binding = StockfishHybridEngine(
+                            binary_dir=os.path.join(config.STOCKFISH_DIR, "src"),
+                            big_net=os.path.basename(config.STOCKFISH_NNUE_PATH),
+                            small_net=os.path.basename(getattr(config, "STOCKFISH_SMALL_NNUE_PATH", "")),
+                            chess960=bool(getattr(config, "USE_CHESS960", False)),
+                        )
+                        self.use_stockfish_engine = True
+                        print("✓ Using stockfish_hybrid_binding for NNUE access")
+                        break
+                    except Exception as exc:
+                        self._hybrid_binding = None
+                        print(f"⚠ Failed to initialize stockfish_hybrid_binding: {exc}")
+                elif backend_choice == "embedded":
+                    if (
+                        not ENABLE_LEGACY_BINDING
+                        or EmbeddedStockfish is None
+                        or self._embedded_stockfish is not None
+                    ):
+                        continue
+                    try:
+                        root_dir = getattr(config, "STOCKFISH_DIR", "")
+                        if root_dir:
+                            root_dir = os.path.join(root_dir, "src")
+                        chess960 = bool(getattr(config, "USE_CHESS960", False))
+                        self._embedded_stockfish = EmbeddedStockfish(root_dir, "", "", chess960)
+
+                        nnue_path = getattr(config, "STOCKFISH_NNUE_PATH", "")
+                        nnue_exists = bool(nnue_path and os.path.exists(nnue_path))
+                        if nnue_exists:
+                            self._embedded_stockfish.load_networks(nnue_path)
+                        else:
+                            raise FileNotFoundError(f"Stockfish NNUE weights not found: {nnue_path}")
+
+                        self.use_stockfish_engine = True
+                        print("✓ Using legacy embedded Stockfish NNUE binding")
+                        break
+                    except Exception as exc:
+                        self._embedded_stockfish = None
+                        print(f"⚠ Failed to initialize legacy Stockfish binding: {exc}")
+                elif backend_choice == "subprocess":
+                    if self._stockfish_interface is not None or not hasattr(config, "STOCKFISH_BINARY_PATH"):
+                        continue
+                    binary_path = config.STOCKFISH_BINARY_PATH
+                    if os.path.exists(binary_path):
+                        try:
+                            self._stockfish_interface = StockfishNNUEInterface(binary_path)
+                            self.use_stockfish_engine = True
+                            print(f"✓ Using Stockfish NNUE evals from: {binary_path}")
+                            break
+                        except Exception as exc:
+                            print(f"⚠ Failed to initialize Stockfish NNUE interface: {exc}")
+                    else:
+                        print(f"⚠ Stockfish binary not found at {binary_path}")
+
+        if use_stockfish_engine and not self.use_stockfish_engine:
+            print("⚠ No NNUE backend initialized; falling back to heuristic evaluator.")
 
     def compute_accumulator(self, board: chess.Board) -> torch.Tensor:
         """
@@ -239,19 +290,32 @@ class NNUEEvaluator(nn.Module):
         """
         features = self.compute_accumulator(board)
         value = None
+        backend_used = "unknown"
 
-        if self._binding_available():
+        if self._hybrid_binding is not None:
+            try:
+                self._hybrid_binding.set_fen(board.fen())
+                value = self._hybrid_binding.evaluate(white_pov=board.turn == chess.WHITE)
+                backend_used = "pybind"
+            except Exception as exc:
+                if not self._warned_fallback:
+                    print(f"⚠ Hybrid binding eval failed, falling back: {exc}")
+                    self._warned_fallback = True
+                self._hybrid_binding = None
+        elif self._binding_available():
             self._ensure_binding_synced(board)
             if self._binding_synced:
                 try:
                     raw_value = float(self._embedded_stockfish.evaluate(0))
                     value = self._value_to_centipawns(raw_value, board)
+                    backend_used = "embedded"
                 except Exception as exc:
                     self._disable_embedding(exc)
 
         if value is None and self._stockfish_interface is not None and self.use_stockfish_engine:
             try:
                 value = self._stockfish_interface.evaluate_board(board)
+                backend_used = "subprocess"
             except Exception as exc:
                 if not self._warned_fallback:
                     print(f"⚠ Falling back to heuristic NNUE value: {exc}")
@@ -259,8 +323,40 @@ class NNUEEvaluator(nn.Module):
 
         if value is None:
             value = self._heuristic_value(board)
+            backend_used = "heuristic"
+
+        self._last_backend = backend_used
 
         return features, float(value)
+
+    def get_ordered_moves(self, board: chess.Board) -> Optional[List[str]]:
+        if self._hybrid_binding is None:
+            return None
+        try:
+            self._hybrid_binding.set_fen(board.fen(), bool(getattr(board, "chess960", False)), [])
+            return list(self._hybrid_binding.ordered_moves())
+        except Exception:
+            return None
+
+    def tt_probe_binding(self, board: chess.Board) -> Optional[dict]:
+        if self._hybrid_binding is None:
+            return None
+        try:
+            self._hybrid_binding.set_fen(board.fen(), bool(getattr(board, "chess960", False)), [])
+            return self._hybrid_binding.tt_probe()
+        except Exception:
+            return None
+
+    def tt_store_binding(self, board: chess.Board, score: float, depth: int,
+                         flag: int, move: Optional[chess.Move]):
+        if self._hybrid_binding is None:
+            return
+        try:
+            self._hybrid_binding.set_fen(board.fen(), bool(getattr(board, "chess960", False)), [])
+            move_str = move.uci() if move is not None else ""
+            self._hybrid_binding.tt_store(score, depth, flag, move_str)
+        except Exception:
+            pass
 
     def _heuristic_value(self, board: chess.Board) -> float:
         """
@@ -413,9 +509,13 @@ class NNUEEvaluator(nn.Module):
         if self._stockfish_interface is not None:
             self._stockfish_interface.close()
 
+    @property
+    def last_backend(self) -> str:
+        return getattr(self, "_last_backend", "unknown")
 
-def create_nnue_evaluator(weights_path: str = None, use_stockfish: bool = True) -> NNUEEvaluator:
+
+def create_nnue_evaluator(weights_path: str = None, use_stockfish: bool = True, preferred_backend: Optional[str] = None) -> NNUEvaluator:
     """
     Factory function kept for backward compatibility.
     """
-    return NNUEEvaluator(weights_path, use_stockfish_engine=use_stockfish)
+    return NNUEEvaluator(weights_path, use_stockfish_engine=use_stockfish, preferred_backend=preferred_backend)

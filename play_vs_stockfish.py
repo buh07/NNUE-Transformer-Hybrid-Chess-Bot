@@ -11,6 +11,7 @@ import os
 import random
 import json
 from pathlib import Path
+import argparse
 from HybridChessBot import HybridChessBot
 
 
@@ -254,6 +255,8 @@ def play_match(hybrid_bot, stockfish_bot,
                 hybrid_score += 0.5
                 stockfish_score += 0.5
         
+        backend_snapshot = dict(hybrid_bot.hybrid_evaluator.stats.get('nnue_backend_usage', {}))
+        result['evaluation_backend_usage'] = backend_snapshot
         results.append(result)
         
         print(f"\nCurrent Score: {hybrid_name} {hybrid_score} - {stockfish_score} {stockfish_name}\n")
@@ -279,19 +282,37 @@ def play_match(hybrid_bot, stockfish_bot,
     avg_moves = sum(r['moves'] for r in results) / len(results)
     print(f"Average game length: {avg_moves:.1f} moves")
     
+    backend_usage = dict(hybrid_bot.hybrid_evaluator.stats.get('nnue_backend_usage', {}))
+    if backend_usage:
+        print("\nNNUE backend usage during match:")
+        for backend_name, data in backend_usage.items():
+            print(f"  - {backend_name}: {data.get('calls', 0)} calls ({data.get('time', 0.0):.2f}s)")
+
     return {
         'hybrid_score': hybrid_score,
         'stockfish_score': stockfish_score,
         'games': results,
         'wins': wins,
         'losses': losses,
-        'draws': draws
+        'draws': draws,
+        'backend_usage': backend_usage,
     }
 
 
 def main():
     """Main function to run bot vs Stockfish"""
     
+    parser = argparse.ArgumentParser(description="Play the Hybrid bot against Stockfish.")
+    parser.add_argument("--auto", action="store_true", help="Run with default quick-test configuration (non-interactive).")
+    parser.add_argument("--games", type=int, help="Number of games to play.")
+    parser.add_argument("--sf-elo", type=int, help="Stockfish ELO (omit for full strength).")
+    parser.add_argument("--sf-depth", type=int, help="Stockfish fixed depth (omit for time-based).")
+    parser.add_argument("--sf-time", type=float, help="Stockfish time per move (seconds).")
+    parser.add_argument("--hybrid-depth", type=int, help="Hybrid bot max depth (omit or 0 for time-based).")
+    parser.add_argument("--hybrid-time", type=float, help="Hybrid bot time per move (seconds).")
+    parser.add_argument("--eval-mode", choices=["auto", "nnue", "transformer"], help="Force evaluator mode.")
+    parser.add_argument("--engine-backend", choices=["pybind", "embedded", "subprocess"], help="Preferred Stockfish backend for NNUE evaluator.")
+    args = parser.parse_args()
     # Find Stockfish executable
     stockfish_paths = [
         "./Stockfish/src/stockfish",
@@ -330,7 +351,7 @@ def main():
     print()
     
     # Non-interactive auto mode: pass 'auto' as a command-line argument or set AUTO_RUN=1
-    auto = ('auto' in sys.argv) or (os.environ.get('AUTO_RUN') == '1')
+    auto = args.auto or ('auto' in sys.argv) or (os.environ.get('AUTO_RUN') == '1')
     if auto:
         # Quick test by default in auto mode
         choice = '1'
@@ -338,7 +359,15 @@ def main():
     else:
         choice = input("Choose configuration (1-5): ").strip()
     
-    if choice == '1':
+    if args.games or args.sf_elo or args.sf_depth or args.sf_time or args.hybrid_depth or args.hybrid_time or args.eval_mode or args.engine_backend:
+        num_games = args.games or 2
+        sf_elo = args.sf_elo
+        sf_depth = args.sf_depth if args.sf_depth and args.sf_depth > 0 else None
+        sf_time = args.sf_time if args.sf_time is not None else (1.0 if sf_depth is None else None)
+        hybrid_depth = args.hybrid_depth if args.hybrid_depth and args.hybrid_depth > 0 else None
+        hybrid_time = args.hybrid_time if args.hybrid_time is not None else 5.0
+        choice = "CLI"
+    elif choice == '1':
         num_games = 2
         sf_elo = None
         sf_depth = 5
@@ -381,7 +410,9 @@ def main():
     # Evaluation mode selection
     eval_mode_env = os.environ.get('HYBRID_EVAL_MODE', 'auto')
     valid_modes = {'auto', 'nnue', 'transformer'}
-    if auto:
+    if args.eval_mode:
+        eval_mode = args.eval_mode
+    elif auto:
         eval_mode = eval_mode_env if eval_mode_env in valid_modes else 'auto'
     else:
         eval_mode_input = input("Evaluation mode (auto/nnue/transformer) [auto]: ").strip().lower()
@@ -392,6 +423,8 @@ def main():
         if eval_mode not in valid_modes:
             print(f"Unknown evaluation mode '{eval_mode}', defaulting to 'auto'.")
             eval_mode = 'auto'
+
+    backend_pref = args.engine_backend or os.environ.get("HYBRID_ENGINE_BACKEND")
     
     print(f"\n{'='*60}")
     print("Match Configuration:")
@@ -399,7 +432,8 @@ def main():
     print(f"  Stockfish: {'ELO ' + str(sf_elo) if sf_elo else 'Full strength'}")
     print(f"  Stockfish: {'Depth ' + str(sf_depth) if sf_depth else f'Time {sf_time}s'}")
     depth_display = "auto (time-based)" if not hybrid_depth else str(hybrid_depth)
-    print(f"  Hybrid: Depth {depth_display}, Time {hybrid_time}s, Eval mode: {eval_mode}")
+    backend_display = backend_pref if backend_pref else "auto (pybind → legacy fallback)"
+    print(f"  Hybrid: Depth {depth_display}, Time {hybrid_time}s, Eval mode: {eval_mode}, Backend: {backend_display}")
     print(f"{'='*60}\n")
     
     if not auto:
@@ -415,7 +449,8 @@ def main():
         depth=hybrid_depth,
         time_limit=hybrid_time,
         verbose=False,  # Set to True for detailed output
-        evaluation_mode=eval_mode
+        evaluation_mode=eval_mode,
+        engine_backend=backend_pref
     )
     print("✓ Hybrid bot ready")
     
@@ -453,6 +488,11 @@ def main():
                 f.write(f"  Result: {game['result']}\n")
                 f.write(f"  Moves: {game['moves']}\n")
                 f.write(f"  Termination: {game['termination']}\n")
+            backend_usage = match_results.get("backend_usage", {})
+            if backend_usage:
+                f.write("\nNNUE backend usage:\n")
+                for backend_name, data in backend_usage.items():
+                    f.write(f"  - {backend_name}: {data.get('calls', 0)} calls ({data.get('time', 0.0):.2f}s)\n")
         
         # Also collect and save hybrid bot instrumentation/statistics when available
         try:

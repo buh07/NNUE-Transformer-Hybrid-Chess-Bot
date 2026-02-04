@@ -43,7 +43,8 @@ class HybridChessBot:
                  device: str = None, verbose: bool = False,
                  use_time_management: bool = False,
                  total_game_time: float = None,
-                 evaluation_mode: str = 'auto'):
+                 evaluation_mode: str = 'auto',
+                 engine_backend: str = None):
         """
         Initialize the hybrid chess bot with ALL downloaded weights.
         
@@ -91,7 +92,7 @@ class HybridChessBot:
             checkpoint = os.path.join(os.path.dirname(__file__), checkpoint)
         
         # Load models (with ALL downloaded weights)
-        self._load_models(checkpoint, evaluation_mode=self.evaluation_mode)
+        self._load_models(checkpoint, evaluation_mode=self.evaluation_mode, engine_backend=engine_backend)
         
         # Initialize search engine
         engine_default_depth = self.max_search_depth or getattr(config, 'MAX_SEARCH_DEPTH', 18)
@@ -108,7 +109,7 @@ class HybridChessBot:
             print(f"[HybridChessBot] Projection params: {self._count_params(self.projection):,}")
             print(f"[HybridChessBot] Selector params: {self._count_params(self.selector):,}")
     
-    def _load_models(self, checkpoint_path: str, evaluation_mode: str = 'auto'):
+    def _load_models(self, checkpoint_path: str, evaluation_mode: str = 'auto', engine_backend: str = None):
         """Load all model components and trained weights."""
         if self.verbose:
             print(f"\n[HybridChessBot] Loading ALL available weights:")
@@ -119,9 +120,14 @@ class HybridChessBot:
         
         # Create base models (frozen, pre-trained)
         # Use Stockfish engine for NNUE evaluations (uses downloaded nn-49c1193b131c.nnue)
+        additional_kwargs = {}
+        if engine_backend:
+            additional_kwargs["preferred_backend"] = engine_backend
+
         self.nnue = create_nnue_evaluator(
             weights_path=config.STOCKFISH_NNUE_PATH,
-            use_stockfish=True
+            use_stockfish=True,
+            **additional_kwargs,
         )
         
         # Load pre-trained transformer (uses CT-EFT-85.pt)
